@@ -761,14 +761,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     return (
       <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
         <div className="w-full max-w-md rounded-3xl bg-[#090D16] border border-slate-800 p-8 shadow-2xl relative text-center">
-          <div className="w-16 h-16 rounded-full bg-black border border-indigo-500/60 flex items-center justify-center mx-auto mb-4 overflow-hidden shadow-lg shadow-purple-500/30">
+          <div className="w-16 h-16 rounded-2xl bg-black border border-amber-500/60 flex items-center justify-center mx-auto mb-4 overflow-hidden shadow-lg shadow-amber-500/30">
             <img
-              src="/assets/aistudio/Neon_Zenvora_Logo_in_Cosmic_Glow__1__84e2a1d9.png"
-              alt="ZENVORA"
+              src="/assets/aistudio/Gemini_Generated_Image_l9mivgl9mivgl9mi_4016af0e.png"
+              alt="AI TIMES"
               className="w-full h-full object-cover"
             />
           </div>
-          <h3 className="text-xl font-bold text-white mb-1">ZENVORA Studio Admin</h3>
+          <h3 className="text-xl font-bold text-white mb-1">AI TIMES Studio Admin</h3>
           <p className="text-xs text-slate-400 mb-6">
             Enter your studio admin passphrase to manage video briefs, custom quotes, users, and deliveries.
           </p>
@@ -820,16 +820,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       {/* Top Admin Bar */}
       <header className="h-16 border-b border-slate-800 bg-[#090D16] px-4 sm:px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-black border border-purple-500/60 overflow-hidden flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-black border border-amber-500/60 overflow-hidden flex items-center justify-center shrink-0">
             <img
-              src="/assets/aistudio/Neon_Zenvora_Logo_in_Cosmic_Glow__1__84e2a1d9.png"
-              alt="ZENVORA"
+              src="/assets/aistudio/Gemini_Generated_Image_l9mivgl9mivgl9mi_4016af0e.png"
+              alt="AI TIMES"
               className="w-full h-full object-cover"
             />
           </div>
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <span>ZENVORA Studio Admin</span>
+              <span>AI TIMES Studio Admin</span>
               <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
                 LIVE
               </span>

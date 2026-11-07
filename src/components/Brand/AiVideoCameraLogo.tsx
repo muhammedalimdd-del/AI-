@@ -1,6 +1,7 @@
 import React from 'react';
 
-export const ZENVORA_LOGO_URL = '/assets/aistudio/Neon_Zenvora_Logo_in_Cosmic_Glow__1__84e2a1d9.png';
+export const AI_TIMES_LOGO_URL = '/assets/aistudio/Gemini_Generated_Image_l9mivgl9mivgl9mi_4016af0e.png';
+export const ZENVORA_LOGO_URL = AI_TIMES_LOGO_URL;
 
 interface LogoProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -29,15 +30,15 @@ export const AiVideoCameraLogo: React.FC<LogoProps> = ({
 
   return (
     <div className={`flex items-center gap-3 select-none ${className}`}>
-      {/* ZENVORA Cosmic Neon Logo */}
+      {/* AI TIMES Golden Royal Emblem Logo */}
       <div
-        className={`${sizeClasses[size]} relative rounded-full p-[1.5px] bg-gradient-to-tr from-purple-600 via-indigo-500 to-cyan-400 shadow-xl shadow-purple-500/30 shrink-0 group overflow-hidden`}
+        className={`${sizeClasses[size]} relative rounded-2xl p-[1.5px] bg-gradient-to-tr from-amber-400 via-yellow-500 to-amber-600 shadow-xl shadow-amber-500/25 shrink-0 group overflow-hidden`}
       >
-        <div className="w-full h-full bg-black rounded-full flex items-center justify-center relative overflow-hidden">
+        <div className="w-full h-full bg-[#070B14] rounded-[14px] flex items-center justify-center relative overflow-hidden">
           <img
-            src={ZENVORA_LOGO_URL}
-            alt="ZENVORA Logo"
-            className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-300"
+            src={AI_TIMES_LOGO_URL}
+            alt="AI TIMES Logo"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         </div>
       </div>
@@ -46,13 +47,13 @@ export const AiVideoCameraLogo: React.FC<LogoProps> = ({
         <div>
           <div className="flex items-center gap-1.5 leading-none">
             <span
-              className={`font-black tracking-wider bg-gradient-to-r from-white via-purple-200 to-cyan-300 bg-clip-text text-transparent ${textSizes[size]}`}
+              className={`font-black tracking-wider bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-400 bg-clip-text text-transparent ${textSizes[size]}`}
             >
-              ZENVORA
+              AI TIMES
             </span>
           </div>
-          <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold tracking-widest uppercase mt-1">
-            AI &bull; Creativity &bull; Innovation
+          <p className="text-[10px] sm:text-[11px] text-amber-200/80 font-semibold tracking-wider mt-1">
+            Dream. Create. Beyond Limits.
           </p>
         </div>
       )}

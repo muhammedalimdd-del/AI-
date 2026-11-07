@@ -38,7 +38,7 @@ export class EmailService {
   /**
    * Resolves a valid Resend 'from' address.
    * Public consumer domains (@gmail.com, @yahoo.com, @outlook.com, @hotmail.com) cannot be verified in Resend DNS,
-   * so we automatically use Resend's official verified sender 'ZENVORA <onboarding@resend.dev>' unless a custom domain is set.
+   * so we automatically use Resend's official verified sender 'AI TIMES <onboarding@resend.dev>' unless a custom domain is set.
    */
   private getResendFromAddress(): string {
     const settings = db.getSettings();
@@ -50,7 +50,7 @@ export class EmailService {
     ).trim();
 
     if (!candidate) {
-      return 'ZENVORA <onboarding@resend.dev>';
+      return 'AI TIMES <onboarding@resend.dev>';
     }
 
     const lower = candidate.toLowerCase();
@@ -61,10 +61,10 @@ export class EmailService {
       lower.includes('@hotmail.com') ||
       lower.includes('@icloud.com')
     ) {
-      return 'ZENVORA <onboarding@resend.dev>';
+      return 'AI TIMES <onboarding@resend.dev>';
     }
 
-    return candidate.includes('<') ? candidate : `ZENVORA <${candidate}>`;
+    return candidate.includes('<') ? candidate : `AI TIMES <${candidate}>`;
   }
 
   /**
@@ -146,12 +146,12 @@ export class EmailService {
       // If custom domain is not verified yet, retry once with onboarding@resend.dev
       if (
         error &&
-        primaryFrom !== 'ZENVORA <onboarding@resend.dev>' &&
+        primaryFrom !== 'AI TIMES <onboarding@resend.dev>' &&
         /domain|verify|not verified|sender/i.test(error.message || '')
       ) {
         const retryResult = await resend.emails.send({
           ...payload,
-          from: 'ZENVORA <onboarding@resend.dev>'
+          from: 'AI TIMES <onboarding@resend.dev>'
         });
         if (!retryResult.error && retryResult.data?.id) {
           return { ok: true, id: retryResult.data.id };
@@ -296,7 +296,7 @@ export class EmailService {
       if (transporter) {
         try {
           await transporter.sendMail({
-            from: `"ZENVORA" <${fromAddress}>`,
+            from: `"AI TIMES" <${fromAddress}>`,
             to: options.to,
             replyTo: options.replyTo,
             subject: options.subject,
@@ -337,7 +337,7 @@ export class EmailService {
             },
             body: JSON.stringify({
               personalizations: [{ to: [{ email: options.to }] }],
-              from: { email: fromAddress, name: 'ZENVORA' },
+              from: { email: fromAddress, name: 'AI TIMES' },
               subject: options.subject,
               content: [
                 { type: 'text/plain', value: options.text },
@@ -436,7 +436,7 @@ export class EmailService {
     if (transporter) {
       try {
         await transporter.sendMail({
-          from: `"ZENVORA" <${fromAddress}>`,
+          from: `"AI TIMES" <${fromAddress}>`,
           to: log.recipient,
           subject: log.subject,
           text: log.textBody,
@@ -473,7 +473,7 @@ export class EmailService {
     const recipient = targetEmail || settings.ownerNotificationEmail || 'muhammedalimdd@gmail.com';
     const subject = 'AI VIDEO MAKER — TEST EMAIL';
     const message =
-      'Congratulations! Your ZENVORA email notification system is connected. New customer video requests will be delivered to this Gmail inbox.';
+      'Congratulations! Your AI TIMES email notification system is connected. New customer video requests will be delivered to this Gmail inbox.';
 
     const html = `
 <!DOCTYPE html>
@@ -482,7 +482,7 @@ export class EmailService {
 <body style="margin:0; padding:24px; background-color:#0B0F19; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#F1F5F9; line-height:1.6;">
   <div style="max-width:600px; margin:0 auto; background-color:#0F172A; border:1px solid #1E293B; border-radius:12px; overflow:hidden; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
     <div style="background:linear-gradient(135deg, #1E1B4B 0%, #0F172A 100%); padding:28px; border-bottom:1px solid #1E293B; text-align:center;">
-      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">ZENVORA</div>
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">AI TIMES</div>
       <h1 style="margin:8px 0 0; font-size:22px; color:#FFFFFF; font-weight:700;">Gmail Connection Test</h1>
     </div>
     <div style="padding:28px;">
@@ -500,7 +500,7 @@ export class EmailService {
       </div>
     </div>
     <div style="padding:16px 28px; background:#0B0F19; border-top:1px solid #1E293B; font-size:12px; color:#64748B; text-align:center;">
-      ZENVORA &bull; Automatic Request Notification System
+      AI TIMES &bull; Automatic Request Notification System
     </div>
   </div>
 </body>
@@ -672,7 +672,7 @@ Status: Verified
     
     <!-- HEADER -->
     <div style="background:linear-gradient(135deg, #1E1B4B 0%, #0F172A 100%); padding:28px; border-bottom:1px solid #1E293B;">
-      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">ZENVORA &bull; Resend Automatic Notification</div>
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">AI TIMES &bull; Resend Automatic Notification</div>
       <h1 style="margin:8px 0 0; font-size:24px; color:#FFFFFF; font-weight:800;">${escapeHtml(subject)}</h1>
       <p style="margin:6px 0 0; color:#94A3B8; font-size:14px;">
         Request ID: <span style="color:#38BDF8; font-family:monospace; font-weight:700;">${request.id}</span> &bull; Submitted: <span style="color:#E2E8F0;">${new Date(request.createdAt).toUTCString()}</span>
@@ -816,7 +816,7 @@ Status: Verified
 
     <!-- FOOTER -->
     <div style="padding:16px 28px; background:#0B0F19; border-top:1px solid #1E293B; font-size:12px; color:#64748B; text-align:center;">
-      ZENVORA &bull; Automatic Resend Delivery to ${escapeHtml(ownerEmail)} &bull; ${request.id}
+      AI TIMES &bull; Automatic Resend Delivery to ${escapeHtml(ownerEmail)} &bull; ${request.id}
     </div>
   </div>
 </body>
@@ -918,7 +918,7 @@ ${adminLink}
 <body style="margin:0; padding:24px; background-color:#0B0F19; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#F1F5F9; line-height:1.6;">
   <div style="max-width:600px; margin:0 auto; background-color:#0F172A; border:1px solid #1E293B; border-radius:12px; overflow:hidden; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
     <div style="background:linear-gradient(135deg, #1E1B4B 0%, #0F172A 100%); padding:28px; border-bottom:1px solid #1E293B; text-align:center;">
-      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">ZENVORA</div>
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">AI TIMES</div>
       <h1 style="margin:8px 0 0; font-size:22px; color:#FFFFFF; font-weight:800;">YOUR AI VIDEO REQUEST HAS BEEN RECEIVED</h1>
       <p style="margin:8px 0 0; color:#94A3B8; font-size:14px;">Unique Request ID: <span style="color:#60A5FA; font-family:monospace; font-weight:700;">${request.id}</span></p>
     </div>
@@ -958,7 +958,7 @@ ${adminLink}
     </div>
 
     <div style="padding:16px 28px; background:#0B0F19; border-top:1px solid #1E293B; font-size:12px; color:#64748B; text-align:center;">
-      ZENVORA &bull; Studio Dispatch &bull; Request ${request.id}
+      AI TIMES &bull; Studio Dispatch &bull; Request ${request.id}
     </div>
   </div>
 </body>
@@ -984,7 +984,7 @@ Status: ${request.status}
 Track status anytime:
 ${trackingLink}
 
-ZENVORA
+AI TIMES
     `.trim();
 
     return this.dispatchEmail({
@@ -1013,7 +1013,7 @@ ZENVORA
 <body style="margin:0; padding:24px; background-color:#0B0F19; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#F1F5F9; line-height:1.6;">
   <div style="max-width:600px; margin:0 auto; background-color:#0F172A; border:1px solid #1E293B; border-radius:12px; overflow:hidden;">
     <div style="background:linear-gradient(135deg, #1E1B4B 0%, #0F172A 100%); padding:28px; border-bottom:1px solid #1E293B; text-align:center;">
-      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#A78BFA; font-weight:700;">ZENVORA</div>
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#A78BFA; font-weight:700;">AI TIMES</div>
       <h1 style="margin:8px 0 0; font-size:22px; color:#FFFFFF; font-weight:700;">Proposed Quote for "${escapeHtml(request.title)}"</h1>
       <p style="margin:8px 0 0; color:#94A3B8; font-size:14px;">Request ID: <span style="color:#60A5FA; font-family:monospace; font-weight:600;">${request.id}</span></p>
     </div>
@@ -1046,7 +1046,7 @@ ZENVORA
     </div>
 
     <div style="padding:16px 28px; background:#0B0F19; border-top:1px solid #1E293B; font-size:12px; color:#64748B; text-align:center;">
-      ZENVORA &bull; Studio Quote Notice &bull; Request ${request.id}
+      AI TIMES &bull; Studio Quote Notice &bull; Request ${request.id}
     </div>
   </div>
 </body>
@@ -1063,7 +1063,7 @@ Scope Breakdown: ${quote.breakdown || 'Comprehensive video production and curati
 Review, accept or decline this quote:
 ${quoteReviewLink}
 
-ZENVORA
+AI TIMES
     `.trim();
 
     return this.dispatchEmail({
@@ -1119,7 +1119,7 @@ Production has officially started. You will receive an email with the video link
 Track progress:
 ${trackingLink}
 
-ZENVORA
+AI TIMES
     `.trim();
 
     return this.dispatchEmail({
@@ -1155,7 +1155,7 @@ ZENVORA
 <body style="margin:0; padding:24px; background-color:#0B0F19; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#F1F5F9; line-height:1.6;">
   <div style="max-width:600px; margin:0 auto; background-color:#0F172A; border:1px solid #1E293B; border-radius:12px; overflow:hidden; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
     <div style="background:linear-gradient(135deg, #065F46 0%, #0F172A 100%); padding:28px; border-bottom:1px solid #1E293B; text-align:center;">
-      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#6EE7B7; font-weight:700;">ZENVORA</div>
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#6EE7B7; font-weight:700;">AI TIMES</div>
       <h1 style="margin:8px 0 0; font-size:24px; color:#FFFFFF; font-weight:700;">Your Completed AI Video is Ready!</h1>
       <p style="margin:6px 0 0; color:#A7F3D0; font-size:14px;">Request ID: <span style="font-family:monospace; font-weight:600;">${escapeHtml(request.id)}</span></p>
     </div>
@@ -1194,7 +1194,7 @@ ZENVORA
     </div>
 
     <div style="padding:16px 28px; background:#0B0F19; border-top:1px solid #1E293B; font-size:12px; color:#64748B; text-align:center;">
-      ZENVORA &bull; Delivered to ${escapeHtml(request.customerEmail)}
+      AI TIMES &bull; Delivered to ${escapeHtml(request.customerEmail)}
     </div>
   </div>
 </body>
@@ -1212,7 +1212,7 @@ ${options.customMessage ? `Studio Note: ${options.customMessage}\n\n` : ''}Secur
 ${fullDownloadUrl}
 
 ${options.expirationNote ? `Notice: ${options.expirationNote}\n` : ''}
-Thank you for creating with ZENVORA!
+Thank you for creating with AI TIMES!
     `.trim();
 
     return this.dispatchEmail({
@@ -1251,7 +1251,7 @@ Thank you for creating with ZENVORA!
 <body style="margin:0; padding:24px; background-color:#0B0F19; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#F1F5F9; line-height:1.6;">
   <div style="max-width:680px; margin:0 auto; background-color:#0F172A; border:1px solid #1E293B; border-radius:12px; overflow:hidden;">
     <div style="background:linear-gradient(135deg, #1E1B4B 0%, #0F172A 100%); padding:28px; border-bottom:1px solid #1E293B;">
-      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">ZENVORA &bull; Direct Request Notification</div>
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#818CF8; font-weight:700;">AI TIMES &bull; Direct Request Notification</div>
       <h2 style="margin:6px 0 0; font-size:22px; color:#FFFFFF;">${escapeHtml(subject)}</h2>
       <p style="margin:4px 0 0; color:#94A3B8; font-size:14px;">Request ID: <span style="color:#60A5FA; font-family:monospace;">${budgetReq.id}</span> &bull; Budget: <strong style="color:#34D399;">${budgetReq.budgetCategory} (${budgetReq.budgetAmount})</strong></p>
     </div>
@@ -1357,7 +1357,7 @@ Thank you for creating with ZENVORA!
     <div style="padding:24px;">
       <p style="color:#CBD5E1; font-size:14px; margin-top:0;">Hello <strong>${escapeHtml(budgetReq.fullName)}</strong>,</p>
       <p style="color:#CBD5E1; font-size:14px;">
-        Thank you for sharing your video idea with ZENVORA. We have received your request and will review it.
+        Thank you for sharing your video idea with AI TIMES. We have received your request and will review it.
       </p>
       ${budgetReq.isFree ? `
       <div style="background:#064E3B; border:1px solid #059669; padding:12px; border-radius:6px; color:#A7F3D0; font-size:13px; margin:16px 0;">
@@ -1375,7 +1375,7 @@ Thank you for creating with ZENVORA!
       to: budgetReq.email,
       subject,
       html,
-      text: `Hello ${budgetReq.fullName},\n\nWe received your request [${budgetReq.id}].\n\nZENVORA`
+      text: `Hello ${budgetReq.fullName},\n\nWe received your request [${budgetReq.id}].\n\nAI TIMES`
     });
   }
 
@@ -1393,7 +1393,7 @@ Thank you for creating with ZENVORA!
       <h3 style="margin:0 0 12px; color:#FFFFFF;">Update Regarding Your Request: ${budgetReq.id}</h3>
       <p style="color:#CBD5E1; font-size:14px;">Hello <strong>${escapeHtml(budgetReq.fullName)}</strong>,</p>
       <div style="background:#131B2E; padding:14px; border-radius:6px; color:#FFFFFF; font-size:14px; margin:14px 0; white-space:pre-wrap;">${escapeHtml(message)}</div>
-      <p style="color:#94A3B8; font-size:12px;">ZENVORA</p>
+      <p style="color:#94A3B8; font-size:12px;">AI TIMES</p>
     </div>
   </div>
 </body>
@@ -1406,7 +1406,7 @@ Thank you for creating with ZENVORA!
       to: budgetReq.email,
       subject,
       html,
-      text: `Update regarding your request [${budgetReq.id}]:\n\n${message}\n\nZENVORA`
+      text: `Update regarding your request [${budgetReq.id}]:\n\n${message}\n\nAI TIMES`
     });
   }
 

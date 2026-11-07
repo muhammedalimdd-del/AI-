@@ -48,8 +48,8 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onTimeout }) => {
 
         <div className="space-y-2">
           <div className="flex items-center justify-center gap-2">
-            <span className="font-black text-2xl tracking-wider bg-gradient-to-r from-white via-purple-300 to-cyan-300 bg-clip-text text-transparent">
-              ZENVORA
+            <span className="font-black text-2xl tracking-wider bg-gradient-to-r from-amber-200 via-yellow-100 to-amber-400 bg-clip-text text-transparent">
+              AI TIMES
             </span>
           </div>
 

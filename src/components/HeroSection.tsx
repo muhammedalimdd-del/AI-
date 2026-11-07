@@ -95,15 +95,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           )}
 
           <div className="flex items-center justify-center gap-2 mb-6">
-            <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-indigo-950/70 border border-indigo-800/60 text-indigo-300 text-xs font-semibold backdrop-blur-sm shadow-lg shadow-indigo-950/40">
+            <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-slate-900/90 border border-amber-500/40 text-amber-300 text-xs font-semibold backdrop-blur-sm shadow-lg shadow-amber-950/40">
               <img
-                src="/assets/aistudio/Neon_Zenvora_Logo_in_Cosmic_Glow__1__84e2a1d9.png"
-                alt="ZENVORA"
-                className="w-5 h-5 rounded-full object-cover border border-purple-500/50"
+                src="/assets/aistudio/Gemini_Generated_Image_l9mivgl9mivgl9mi_4016af0e.png"
+                alt="AI TIMES"
+                className="w-5 h-5 rounded-md object-cover border border-amber-400/60"
               />
-              <span className="font-black tracking-wider text-white">ZENVORA</span>
+              <span className="font-black tracking-wider text-amber-200">AI TIMES</span>
               <span className="text-slate-500">·</span>
-              <span>AI &bull; Creativity &bull; Innovation &mdash; Imagine Beyond Reality</span>
+              <span>Dream. Create. Beyond Limits.</span>
             </div>
           </div>
 

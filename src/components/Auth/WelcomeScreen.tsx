@@ -264,14 +264,14 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onSuccess }) => {
             {/* Exact Required Main Heading */}
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight leading-[1.1]">
               Welcome to{' '}
-              <span className="bg-gradient-to-r from-purple-400 via-indigo-300 to-cyan-300 bg-clip-text text-transparent">
-                ZENVORA
+              <span className="bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-500 bg-clip-text text-transparent">
+                AI TIMES
               </span>
             </h1>
 
             {/* Exact Required Subtitle */}
             <p className="text-base sm:text-lg text-slate-300 max-w-2xl leading-relaxed">
-              Imagine Beyond Reality. Create amazing AI videos with your own imagination.
+              Dream. Create. Beyond Limits. Create amazing AI videos with your own imagination.
             </p>
           </div>
 
@@ -354,7 +354,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onSuccess }) => {
                       <span>Personal Studio Account</span>
                     </div>
                     <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                      Welcome to ZENVORA
+                      Welcome to AI TIMES
                     </h2>
                     <p className="text-xs sm:text-sm text-slate-300 mt-2 leading-relaxed">
                       Sign in with your existing account or create a new personal account with your own username and password.

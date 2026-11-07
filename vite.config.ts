@@ -15,9 +15,9 @@ export default defineConfig(({ command }) => {
         includeAssets: ['favicon.png', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
           id: '/',
-          name: 'AI Video Maker - ZENVORA',
-          short_name: 'ZENVORA',
-          description: 'Imagine Beyond Reality. Create custom AI videos with your own characters, stories, and visual styles.',
+          name: 'AI TIMES - AI Video Maker',
+          short_name: 'AI TIMES',
+          description: 'Dream. Create. Beyond Limits. Create custom AI videos with your own characters, stories, and visual styles.',
           theme_color: '#050811',
           background_color: '#050811',
           display: 'standalone',
@@ -46,7 +46,8 @@ export default defineConfig(({ command }) => {
           ]
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}']
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024
         },
         devOptions: {
           enabled: true,
