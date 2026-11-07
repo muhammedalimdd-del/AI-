@@ -1,0 +1,20 @@
+{
+  "users": [],
+  "devices": [],
+  "sessions": [],
+  "auditLogs": [],
+  "requests": [],
+  "emailLogs": [],
+  "budgetRequests": [],
+  "settings": {
+    "ownerNotificationEmail": "muhammedalimdd@gmail.com",
+    "emailFromAddress": "studio@aivideomaker.com",
+    "defaultTurnaroundDays": 3,
+    "emailProvider": "resend",
+    "smtpHost": "smtp.gmail.com",
+    "smtpPort": 465,
+    "smtpSecure": true,
+    "smtpUser": "muhammedalimdd@gmail.com",
+    "smtpPass": ""
+  }
+}
