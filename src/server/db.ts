@@ -11,8 +11,6 @@ import {
   AuditLog,
   QuoteDetails,
   PaymentDetails,
-  TrialStatus,
-  DeviceRegistration,
   AuthSession
 } from './types.ts';
 
@@ -39,7 +37,6 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SEED_DB_FILE = path.resolve(process.cwd(), 'data', 'db.json');
 export const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
-// Ensure storage directories exist
 try {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -54,9 +51,18 @@ try {
 const defaultOwnerEmail = process.env.OWNER_NOTIFICATION_EMAIL || 'muhammedalimdd@gmail.com';
 const defaultFromEmail = process.env.EMAIL_FROM_ADDRESS || 'studio@aivideomaker.com';
 
+const RESERVED_USERNAMES = new Set([
+  'ali',
+  'admin',
+  'administrator',
+  'root',
+  'owner',
+  'superadmin',
+  'studioadmin'
+]);
+
 const INITIAL_DB: DatabaseSchema = {
   users: [],
-  devices: [],
   sessions: [],
   auditLogs: [],
   requests: [],
@@ -84,32 +90,45 @@ export function hashPassword(password: string): { hash: string; salt: string } {
 }
 
 export function verifyPassword(password: string, hash?: string, salt?: string): boolean {
-  if (!hash || !salt) return false;
+  if (!password || !hash || !salt) return false;
   try {
-    // Support SHA-256 salted hashes from Web Crypto / Firestore sync
-    if (hash.startsWith('sha256:')) {
-      const expected = hash.slice(7);
-      const computed = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
-      return expected === computed;
-    }
-    if (hash.length === 64) {
-      const computedSha = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
-      if (hash === computedSha) return true;
-    }
-    // Standard 64-byte (128 hex chars) scryptSync verification
     const checkHash = crypto.scryptSync(password, salt, 64).toString('hex');
     if (hash.length === checkHash.length) {
       return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(checkHash, 'hex'));
     }
-    return hash === checkHash;
+    return false;
   } catch {
     return false;
   }
 }
 
-export function sanitizeUser(user: UserAccount): UserAccount {
-  const { passwordHash, passwordSalt, ...safe } = user;
-  return safe as UserAccount;
+export interface SafeUserAccount {
+  uid: string;
+  username: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  createdAt: string;
+  lastLoginAt: string;
+  role: 'customer' | 'admin';
+  hasRecoveryEmail: boolean;
+}
+
+export function sanitizeUser(user: UserAccount): SafeUserAccount {
+  const normalizedRole: 'customer' | 'admin' = user.role === 'admin' ? 'admin' : 'customer';
+  const cleanEmail =
+    user.email && !user.email.endsWith('@aivideomaker.local') ? user.email : '';
+  return {
+    uid: user.uid,
+    username: user.username,
+    email: cleanEmail,
+    displayName: user.displayName || user.username,
+    photoURL: user.photoURL,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    role: normalizedRole,
+    hasRecoveryEmail: Boolean(cleanEmail && cleanEmail.includes('@'))
+  };
 }
 
 class Database {
@@ -131,24 +150,19 @@ class Database {
         const raw = fs.readFileSync(fileToRead, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.requests)) {
-          if (!Array.isArray(parsed.budgetRequests)) {
-            parsed.budgetRequests = [];
-          }
-          if (!Array.isArray(parsed.users)) {
-            parsed.users = [];
-          }
-          if (!Array.isArray(parsed.auditLogs)) {
-            parsed.auditLogs = [];
-          }
-          if (!Array.isArray(parsed.devices)) {
-            parsed.devices = [];
-          }
-          if (!Array.isArray(parsed.sessions)) {
-            parsed.sessions = [];
-          }
-          if (!parsed.settings) {
-            parsed.settings = INITIAL_DB.settings;
-          }
+          if (!Array.isArray(parsed.budgetRequests)) parsed.budgetRequests = [];
+          if (!Array.isArray(parsed.users)) parsed.users = [];
+          if (!Array.isArray(parsed.auditLogs)) parsed.auditLogs = [];
+          if (!Array.isArray(parsed.sessions)) parsed.sessions = [];
+          if (!Array.isArray(parsed.emailLogs)) parsed.emailLogs = [];
+          if (!parsed.settings) parsed.settings = INITIAL_DB.settings;
+
+          // Normalize any legacy user roles
+          parsed.users = parsed.users.map((u: any) => ({
+            ...u,
+            role: u.role === 'admin' ? 'admin' : 'customer'
+          }));
+
           return parsed;
         }
       }
@@ -174,10 +188,14 @@ class Database {
   }
 
   public resetAllData(): void {
+    // Preserve the admin account so the owner isn't locked out after resetting customer data
+    const adminUser = this.getAdminUser();
+    const adminSessions = adminUser
+      ? this.data.sessions.filter((s) => s.userId === adminUser.uid)
+      : [];
     const cleanState: DatabaseSchema = {
-      users: [],
-      devices: [],
-      sessions: [],
+      users: adminUser ? [adminUser] : [],
+      sessions: adminSessions,
       auditLogs: [],
       requests: [],
       emailLogs: [],
@@ -187,7 +205,201 @@ class Database {
     this.persist(cleanState);
   }
 
-  // ---------------- USER & DEVICE-LOCKED AUTH METHODS ----------------
+  // ---------------- ADMIN ACCOUNT INITIALIZATION & AUTH ----------------
+
+  public getAdminUser(): UserAccount | undefined {
+    return this.data.users.find(
+      (u) => u.role === 'admin' && u.username?.trim().toLowerCase() === 'ali'
+    );
+  }
+
+  public hasAdminAccount(): boolean {
+    const admin = this.getAdminUser();
+    return Boolean(admin && admin.passwordHash && admin.passwordSalt);
+  }
+
+  public initAdminAccount(envPassword?: string): void {
+    const cleanPass = (envPassword || '').trim();
+    const existingAdmin = this.getAdminUser();
+
+    if (existingAdmin) {
+      // Only update hash if ADMIN_PASSWORD is provided AND admin had no password yet (or explicit sync requested)
+      if (cleanPass && (!existingAdmin.passwordHash || process.env.ADMIN_PASSWORD_SYNC === 'true')) {
+        const { hash, salt } = hashPassword(cleanPass);
+        existingAdmin.passwordHash = hash;
+        existingAdmin.passwordSalt = salt;
+        this.persist({ ...this.data });
+      }
+      return;
+    }
+
+    if (!cleanPass) {
+      console.warn(
+        '[SECURITY] ADMIN_PASSWORD is not set and admin account "ali" is not yet initialized. ' +
+          'Set ADMIN_PASSWORD in your environment or complete one-time setup at /admin.'
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const { hash, salt } = hashPassword(cleanPass);
+    const adminUser: UserAccount = {
+      uid: 'adm_ali',
+      username: 'ali',
+      displayName: 'Ali (Studio Owner)',
+      email: defaultOwnerEmail,
+      passwordHash: hash,
+      passwordSalt: salt,
+      createdAt: now,
+      lastLoginAt: now,
+      role: 'admin'
+    };
+
+    this.data.users.push(adminUser);
+    this.persist({ ...this.data });
+  }
+
+  public setupInitialAdminPassword(params: {
+    password: string;
+    confirmPassword: string;
+  }): { user: SafeUserAccount; session: AuthSession } {
+    if (this.hasAdminAccount()) {
+      throw new Error('Admin account is already initialized.');
+    }
+    const password = params.password || '';
+    const confirmPassword = params.confirmPassword || '';
+    if (password.length < 6) {
+      throw new Error('Admin password must be at least 6 characters long.');
+    }
+    if (password !== confirmPassword) {
+      throw new Error('Passwords do not match.');
+    }
+
+    const now = new Date().toISOString();
+    const { hash, salt } = hashPassword(password);
+    let admin = this.getAdminUser();
+    if (!admin) {
+      admin = {
+        uid: 'adm_ali',
+        username: 'ali',
+        displayName: 'Ali (Studio Owner)',
+        email: defaultOwnerEmail,
+        passwordHash: hash,
+        passwordSalt: salt,
+        createdAt: now,
+        lastLoginAt: now,
+        role: 'admin'
+      };
+      this.data.users.push(admin);
+    } else {
+      admin.passwordHash = hash;
+      admin.passwordSalt = salt;
+      admin.lastLoginAt = now;
+    }
+
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const session: AuthSession = {
+      token: sessionToken,
+      userId: admin.uid,
+      username: admin.username,
+      role: 'admin',
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()
+    };
+
+    this.data.sessions.push(session);
+    this.persist({ ...this.data });
+    return { user: sanitizeUser(admin), session };
+  }
+
+  public loginAdminAccount(params: {
+    username: string;
+    password: string;
+  }): { user: SafeUserAccount; session: AuthSession } {
+    const username = (params.username || '').trim().toLowerCase();
+    const password = params.password || '';
+
+    if (username !== 'ali' || !password) {
+      throw new Error('Incorrect admin username or password.');
+    }
+
+    const admin = this.getAdminUser();
+    if (!admin || !admin.passwordHash || !admin.passwordSalt) {
+      throw new Error('Admin account is not initialized.');
+    }
+
+    const isValid = verifyPassword(password, admin.passwordHash, admin.passwordSalt);
+    if (!isValid) {
+      throw new Error('Incorrect admin username or password.');
+    }
+
+    const now = new Date().toISOString();
+    admin.lastLoginAt = now;
+
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const newSession: AuthSession = {
+      token: sessionToken,
+      userId: admin.uid,
+      username: admin.username,
+      role: 'admin',
+      createdAt: now,
+      expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()
+    };
+
+    this.data.sessions.push(newSession);
+    this.persist({ ...this.data });
+
+    return {
+      user: sanitizeUser(admin),
+      session: newSession
+    };
+  }
+
+  public changeAdminPassword(params: {
+    adminUid: string;
+    currentPassword: string;
+    newPassword: string;
+    confirmPassword: string;
+    keepToken?: string;
+  }): void {
+    const admin = this.data.users.find(
+      (u) => u.uid === params.adminUid && u.role === 'admin'
+    );
+    if (!admin) {
+      throw new Error('Admin account not found.');
+    }
+    if (!verifyPassword(params.currentPassword, admin.passwordHash, admin.passwordSalt)) {
+      throw new Error('Current admin password is incorrect.');
+    }
+    if (!params.newPassword || params.newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters long.');
+    }
+    if (params.newPassword !== params.confirmPassword) {
+      throw new Error('New passwords do not match.');
+    }
+
+    const { hash, salt } = hashPassword(params.newPassword);
+    admin.passwordHash = hash;
+    admin.passwordSalt = salt;
+
+    // Revoke other admin sessions
+    this.data.sessions = this.data.sessions.filter(
+      (s) => s.userId !== admin.uid || (params.keepToken && s.token === params.keepToken)
+    );
+
+    this.data.auditLogs.unshift({
+      id: `aud-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      timestamp: new Date().toISOString(),
+      action: 'ADMIN_PASSWORD_CHANGED',
+      adminEmail: admin.email || 'ali',
+      targetUserEmail: admin.username,
+      details: 'Administrator password was updated.'
+    });
+
+    this.persist({ ...this.data });
+  }
+
+  // ---------------- CUSTOMER ACCOUNT AUTHENTICATION & ISOLATION ----------------
 
   public getUserByUid(uid: string): UserAccount | undefined {
     return this.data.users.find((u) => u.uid === uid);
@@ -200,217 +412,131 @@ class Database {
   }
 
   public getUserByEmail(email: string): UserAccount | undefined {
+    if (!email) return undefined;
     const normalized = email.trim().toLowerCase();
-    return this.data.users.find((u) => u.email.trim().toLowerCase() === normalized);
+    return this.data.users.find((u) => u.email?.trim().toLowerCase() === normalized);
   }
 
-  public getDeviceById(deviceId: string): DeviceRegistration | undefined {
-    if (!deviceId) return undefined;
-    return this.data.devices.find((d) => d.deviceId === deviceId);
-  }
-
-  public getDeviceByFingerprint(fingerprintHash: string): DeviceRegistration | undefined {
-    if (!fingerprintHash) return undefined;
-    return this.data.devices.find((d) => d.fingerprintHash === fingerprintHash);
-  }
-
-  public getDeviceForClient(deviceId?: string, fingerprintHash?: string): DeviceRegistration | undefined {
-    if (deviceId) {
-      const match = this.getDeviceById(deviceId);
-      if (match) return match;
-    }
-    if (fingerprintHash) {
-      const match = this.getDeviceByFingerprint(fingerprintHash);
-      if (match) return match;
-    }
-    return undefined;
-  }
-
-  public getDeviceByUserId(userId: string): DeviceRegistration | undefined {
-    return this.data.devices.find((d) => d.registeredUserId === userId);
-  }
-
-  public getAllDevices(): DeviceRegistration[] {
-    return [...this.data.devices];
-  }
-
-  public checkDeviceStatus(deviceId?: string, fingerprintHash?: string): {
-    isRegistered: boolean;
-    lockedUsername: string | null;
-    deviceId: string;
-    registeredUserId: string | null;
-  } {
-    // Check if the device is already permanently registered on the backend
-    const matched = this.getDeviceForClient(deviceId, fingerprintHash);
-    if (matched) {
-      return {
-        isRegistered: true,
-        lockedUsername: matched.registeredUsername || null,
-        deviceId: matched.deviceId,
-        registeredUserId: matched.registeredUserId
-      };
-    }
-    return {
-      isRegistered: false,
-      lockedUsername: null,
-      deviceId: deviceId || `dev_${crypto.randomBytes(8).toString('hex')}`,
-      registeredUserId: null
-    };
-  }
-
-  public registerDeviceAccount(params: {
-    fullName?: string;
-    displayName?: string;
-    email?: string;
-    contactEmail?: string;
+  public registerCustomerAccount(params: {
     username: string;
     password: string;
     confirmPassword?: string;
-    deviceId?: string;
-    fingerprintHash?: string;
-    ipSubnet?: string;
-    userAgent?: string;
-    passwordHash?: string;
-    passwordSalt?: string;
-    uid?: string;
-  }): { user: UserAccount; device: DeviceRegistration; session: AuthSession } {
-    const rawDeviceId = params.deviceId;
-    const rawFingerprint = params.fingerprintHash;
+    email?: string;
+  }): { user: SafeUserAccount; session: AuthSession; recoveryKey: string } {
+    const username = (params.username || '').trim();
+    const password = params.password || '';
+    const confirmPassword = params.confirmPassword;
+    const rawEmail = (params.email || '').trim().toLowerCase();
 
-    // Strict Server-Side Device Check: Only allow one account registration per registered device
-    if (rawDeviceId || rawFingerprint) {
-      const existingDevice = this.getDeviceForClient(rawDeviceId, rawFingerprint);
-      if (existingDevice) {
-        throw new Error(
-          'An account has already been registered on this device. Only one account registration is permitted per device. Please sign in using your existing username and password.'
-        );
+    if (!username || username.length < 2) {
+      throw new Error('Please enter a name or username (at least 2 characters).');
+    }
+    if (!/^[a-zA-Z0-9_.\- ]+$/.test(username)) {
+      throw new Error('Username may only contain letters, numbers, spaces, underscores, dots, and hyphens.');
+    }
+    if (RESERVED_USERNAMES.has(username.toLowerCase())) {
+      throw new Error('This username is reserved. Please choose a different username.');
+    }
+
+    if (rawEmail) {
+      const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      if (!emailRegex.test(rawEmail)) {
+        throw new Error('Please enter a valid recovery email address.');
       }
     }
-    const username = (params.username || '').trim();
-    const fullName = (params.fullName || params.displayName || '').trim();
-    const rawEmail = (params.email || params.contactEmail || '').trim().toLowerCase();
 
-    if (!fullName) {
-      throw new Error('Please enter your Full Name.');
+    if (!password || password.length < 6) {
+      throw new Error('Password must be at least 6 characters long.');
     }
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!rawEmail || !emailRegex.test(rawEmail)) {
-      throw new Error('Please enter a valid Email Address.');
-    }
-    if (!username || username.length < 3) {
-      throw new Error('Username must be at least 3 characters long.');
-    }
-    if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
-      throw new Error('Username may only contain letters, numbers, underscores, dots, and hyphens.');
-    }
-    if (!params.password || params.password.length < 4) {
-      throw new Error('Password must be at least 4 characters long.');
-    }
-    if (params.confirmPassword !== undefined && params.password !== params.confirmPassword) {
+    if (confirmPassword !== undefined && password !== confirmPassword) {
       throw new Error('Passwords do not match. Please confirm your password.');
     }
 
-    // Strict Server-Side Check: Every username must be unique
-    const existingUser = this.getUserByUsername(username);
-    if (existingUser) {
-      throw new Error('This username is already taken. Please choose another username.');
+    if (this.getUserByUsername(username)) {
+      throw new Error('This username is already taken. Please choose a different username or log in.');
     }
 
     const now = new Date().toISOString();
-    const userId = params.uid || `usr_${crypto.randomBytes(8).toString('hex')}`;
-    const deviceId = params.deviceId || `dev_${crypto.randomBytes(8).toString('hex')}`;
-    const { hash, salt } =
-      params.passwordHash && params.passwordSalt
-        ? { hash: params.passwordHash, salt: params.passwordSalt }
-        : hashPassword(params.password);
+    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const { hash, salt } = hashPassword(password);
+
+    // One-time recovery key for password reset fallback
+    const recoveryKey = `AT-${crypto.randomBytes(2).toString('hex').toUpperCase()}-${crypto
+      .randomBytes(2)
+      .toString('hex')
+      .toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const recoveryHashed = hashPassword(recoveryKey);
 
     const newUser: UserAccount = {
       uid: userId,
       username,
-      displayName: fullName,
+      displayName: username,
       email: rawEmail,
       passwordHash: hash,
       passwordSalt: salt,
-      deviceId,
-      deviceFingerprint: params.fingerprintHash || deviceId,
+      recoveryKeyHash: recoveryHashed.hash,
+      recoveryKeySalt: recoveryHashed.salt,
       createdAt: now,
       lastLoginAt: now,
-      trialStatus: 'eligible',
-      role: username.toLowerCase() === 'admin' ? 'admin' : 'user'
+      role: 'customer'
     };
 
-    const newDevice: DeviceRegistration = {
-      deviceId,
-      fingerprintHash: params.fingerprintHash || deviceId,
-      registeredUserId: userId,
-      registeredUsername: username,
-      ipSubnet: params.ipSubnet || '0.0.0.0',
-      userAgent: params.userAgent || '',
-      firstRegisteredAt: now,
-      lastSeenAt: now,
-      registrationLockActive: false
-    };
-
-    // Create session token (valid 30 days)
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const newSession: AuthSession = {
       token: sessionToken,
       userId,
       username,
-      deviceId,
+      role: 'customer',
       createdAt: now,
       expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
     };
 
     this.data.users.push(newUser);
-    this.data.devices.push(newDevice);
     this.data.sessions.push(newSession);
     this.persist({ ...this.data });
 
     return {
       user: sanitizeUser(newUser),
-      device: newDevice,
-      session: newSession
+      session: newSession,
+      recoveryKey
     };
   }
 
-  public loginDeviceAccount(params: {
+  public loginCustomerAccount(params: {
     username: string;
     password: string;
-    deviceId?: string;
-    fingerprintHash?: string;
-    ipSubnet?: string;
-  }): { user: UserAccount; session: AuthSession } {
+  }): { user: SafeUserAccount; session: AuthSession } {
     const username = (params.username || '').trim();
-    if (!username || !params.password) {
-      throw new Error('Invalid username or password. Please try again.');
+    const password = params.password || '';
+
+    if (!username || !password) {
+      throw new Error('Incorrect username or password. Please try again.');
     }
 
     const user = this.getUserByUsername(username);
-    if (!user) {
-      throw new Error('Invalid username or password. Please try again.');
+    // Reject missing user or admin user attempting login through customer portal
+    if (!user || user.role === 'admin') {
+      throw new Error('Incorrect username or password. Please try again.');
     }
 
-    // Verify password
     if (!user.passwordHash || !user.passwordSalt) {
-      throw new Error('Invalid username or password. Please try again.');
+      throw new Error('Incorrect username or password. Please try again.');
     }
 
-    const isValid = verifyPassword(params.password, user.passwordHash, user.passwordSalt);
+    const isValid = verifyPassword(password, user.passwordHash, user.passwordSalt);
     if (!isValid) {
-      throw new Error('Invalid username or password. Please try again.');
+      throw new Error('Incorrect username or password. Please try again.');
     }
 
     const now = new Date().toISOString();
     user.lastLoginAt = now;
 
-    // Create session token (valid 30 days)
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const newSession: AuthSession = {
       token: sessionToken,
       userId: user.uid,
       username: user.username,
-      deviceId: params.deviceId || user.deviceId || 'dev_known',
+      role: 'customer',
       createdAt: now,
       expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
     };
@@ -424,82 +550,132 @@ class Database {
     };
   }
 
-  public syncDeviceUserFromCloud(params: {
-    user: UserAccount;
-    device?: DeviceRegistration;
-    session?: AuthSession;
-  }): { user: UserAccount; token: string } {
-    const incomingUser = params.user;
-    let existingUser =
-      this.getUserByUid(incomingUser.uid) ||
-      (incomingUser.username ? this.getUserByUsername(incomingUser.username) : undefined);
+  public requestCustomerPasswordReset(params: {
+    username: string;
+    email?: string;
+  }): {
+    found: boolean;
+    canSendEmail: boolean;
+    email?: string;
+    code?: string;
+    username?: string;
+  } {
+    const username = (params.username || '').trim();
+    const user = this.getUserByUsername(username);
+    if (!user || user.role === 'admin') {
+      return { found: false, canSendEmail: false };
+    }
 
-    if (!existingUser) {
-      existingUser = {
-        ...incomingUser,
-        createdAt: incomingUser.createdAt || new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-        trialStatus: incomingUser.trialStatus || 'eligible'
+    const targetEmail = (user.email || params.email || '').trim().toLowerCase();
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    // Only email code if the customer registered with an email (or has a request delivery email matching)
+    const userHasMatchingEmail = Boolean(user.email && emailRegex.test(user.email));
+    if (!userHasMatchingEmail && targetEmail && emailRegex.test(targetEmail)) {
+      const ownsRequestWithEmail = this.data.requests.some(
+        (r) => r.userId === user.uid && r.customerEmail?.toLowerCase() === targetEmail
+      );
+      if (ownsRequestWithEmail) {
+        user.email = targetEmail;
+      }
+    }
+
+    if (user.email && emailRegex.test(user.email)) {
+      const code = String(crypto.randomInt(100000, 999999));
+      const hashedCode = hashPassword(code);
+      user.resetCodeHash = `${hashedCode.salt}:${hashedCode.hash}`;
+      user.resetCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      this.persist({ ...this.data });
+      return {
+        found: true,
+        canSendEmail: true,
+        email: user.email,
+        code,
+        username: user.username
       };
-      this.data.users.push(existingUser);
-    } else {
-      existingUser.lastLoginAt = new Date().toISOString();
-      if (incomingUser.displayName) {
-        existingUser.displayName = incomingUser.displayName;
-      }
-      if (incomingUser.email) {
-        existingUser.email = incomingUser.email;
-      }
-      if (incomingUser.passwordHash && !existingUser.passwordHash) {
-        existingUser.passwordHash = incomingUser.passwordHash;
-        existingUser.passwordSalt = incomingUser.passwordSalt;
-      }
-      if (incomingUser.deviceId && !existingUser.deviceId) {
-        existingUser.deviceId = incomingUser.deviceId;
-      }
-      if (incomingUser.deviceFingerprint && !existingUser.deviceFingerprint) {
-        existingUser.deviceFingerprint = incomingUser.deviceFingerprint;
-      }
     }
 
-    if (params.device) {
-      const existingDev = this.getDeviceById(params.device.deviceId);
-      if (!existingDev) {
-        this.data.devices.push(params.device);
-      } else {
-        existingDev.lastSeenAt = new Date().toISOString();
-      }
-    }
-
-    const now = new Date().toISOString();
-    const token = params.session?.token || crypto.randomBytes(32).toString('hex');
-    const existingSession = this.data.sessions.find((s) => s.token === token);
-    if (!existingSession) {
-      this.data.sessions.push({
-        token,
-        userId: existingUser.uid,
-        username: existingUser.username,
-        deviceId: existingUser.deviceId || params.device?.deviceId || 'dev_synced',
-        createdAt: now,
-        expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
-      });
-    }
-
-    this.persist({ ...this.data });
     return {
-      user: sanitizeUser(existingUser),
-      token
+      found: true,
+      canSendEmail: false,
+      username: user.username
     };
   }
 
-  public getSessionUser(token: string): UserAccount | null {
+  public completeCustomerPasswordReset(params: {
+    username: string;
+    resetCodeOrKey: string;
+    newPassword: string;
+    confirmPassword: string;
+  }): void {
+    const username = (params.username || '').trim();
+    const codeOrKey = (params.resetCodeOrKey || '').trim();
+    const newPassword = params.newPassword || '';
+    const confirmPassword = params.confirmPassword || '';
+
+    const user = this.getUserByUsername(username);
+    if (!user || user.role === 'admin') {
+      throw new Error('Unable to verify recovery credentials.');
+    }
+    if (!codeOrKey) {
+      throw new Error('Please enter your Recovery Key or 6-digit email reset code.');
+    }
+    if (newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters long.');
+    }
+    if (newPassword !== confirmPassword) {
+      throw new Error('Passwords do not match.');
+    }
+
+    let verified = false;
+
+    // 1. Check 6-digit email OTP
+    if (user.resetCodeHash && user.resetCodeExpiresAt) {
+      if (new Date(user.resetCodeExpiresAt).getTime() > Date.now()) {
+        const [salt, hash] = user.resetCodeHash.split(':');
+        if (verifyPassword(codeOrKey, hash, salt)) {
+          verified = true;
+        }
+      }
+    }
+
+    // 2. Check one-time Recovery Key
+    if (!verified && user.recoveryKeyHash && user.recoveryKeySalt) {
+      if (verifyPassword(codeOrKey.toUpperCase(), user.recoveryKeyHash, user.recoveryKeySalt)) {
+        verified = true;
+      }
+    }
+
+    if (!verified) {
+      throw new Error('Invalid or expired recovery code / recovery key.');
+    }
+
+    const { hash, salt } = hashPassword(newPassword);
+    user.passwordHash = hash;
+    user.passwordSalt = salt;
+    user.resetCodeHash = undefined;
+    user.resetCodeExpiresAt = undefined;
+
+    // Revoke all old customer sessions
+    this.data.sessions = this.data.sessions.filter((s) => s.userId !== user.uid);
+    this.persist({ ...this.data });
+  }
+
+  public getSession(token: string): { session: AuthSession; user: SafeUserAccount } | null {
     if (!token) return null;
     const session = this.data.sessions.find(
       (s) => s.token === token && new Date(s.expiresAt).getTime() > Date.now()
     );
     if (!session) return null;
     const user = this.getUserByUid(session.userId);
-    return user ? sanitizeUser(user) : null;
+    if (!user) return null;
+    return {
+      session,
+      user: sanitizeUser(user)
+    };
+  }
+
+  public getSessionUser(token: string): SafeUserAccount | null {
+    return this.getSession(token)?.user || null;
   }
 
   public revokeSession(token: string): void {
@@ -508,82 +684,11 @@ class Database {
     this.persist({ ...this.data });
   }
 
-  public getAllUsers(): UserAccount[] {
-    return [...this.data.users].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }
-
-  public syncUser(payload: {
-    uid: string;
-    email: string;
-    displayName?: string;
-    photoURL?: string;
-  }): UserAccount {
-    const normalizedEmail = payload.email.trim().toLowerCase();
-    let user = this.data.users.find(
-      (u) => u.uid === payload.uid || u.email.trim().toLowerCase() === normalizedEmail
-    );
-
-    const now = new Date().toISOString();
-
-    if (user) {
-      // Update existing user profile
-      user.uid = payload.uid;
-      user.email = normalizedEmail;
-      if (payload.displayName) user.displayName = payload.displayName;
-      if (payload.photoURL) user.photoURL = payload.photoURL;
-      user.lastLoginAt = now;
-      this.persist({ ...this.data });
-      return user;
-    }
-
-    // Create new persistent user record
-    const newUser: UserAccount = {
-      uid: payload.uid,
-      username: payload.displayName?.toLowerCase().replace(/[^a-z0-9_-]/g, '') || normalizedEmail.split('@')[0],
-      email: normalizedEmail,
-      displayName: payload.displayName || normalizedEmail.split('@')[0],
-      photoURL: payload.photoURL || '',
-      createdAt: now,
-      lastLoginAt: now,
-      trialStatus: 'eligible', // Fresh eligible account
-      role: normalizedEmail === 'muhammedalimdd@gmail.com' ? 'admin' : 'user'
-    };
-
-    this.data.users.push(newUser);
-    this.persist({ ...this.data });
-    return newUser;
-  }
-
-  public updateUserTrialStatus(
-    uidOrEmail: string,
-    newStatus: TrialStatus,
-    adminEmail: string,
-    reason: string
-  ): { user: UserAccount; audit: AuditLog } | null {
-    const user = this.data.users.find(
-      (u) => u.uid === uidOrEmail || u.email.toLowerCase() === uidOrEmail.toLowerCase()
-    );
-    if (!user) return null;
-
-    const previousStatus = user.trialStatus;
-    user.trialStatus = newStatus;
-    if (newStatus === 'eligible') {
-      user.trialUsedAt = undefined;
-      user.trialRequestId = undefined;
-    }
-
-    const audit: AuditLog = {
-      id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      action: 'UPDATE_TRIAL_STATUS',
-      adminEmail,
-      targetUserEmail: user.email,
-      details: `Changed trial status from ${previousStatus} to ${newStatus}. Reason: ${reason}`
-    };
-
-    this.data.auditLogs.unshift(audit);
-    this.persist({ ...this.data });
-    return { user, audit };
+  public getAllUsers(): SafeUserAccount[] {
+    return [...this.data.users]
+      .filter((u) => u.role !== 'admin')
+      .map(sanitizeUser)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   public getAuditLogs(): AuditLog[] {
@@ -598,39 +703,11 @@ class Database {
     );
   }
 
-  public getUserRequests(queryOrFilter: string | { uid?: string; username?: string; email?: string }): VideoRequest[] {
-    if (typeof queryOrFilter === 'object' && queryOrFilter !== null) {
-      const uid = (queryOrFilter.uid || '').trim();
-      const username = (queryOrFilter.username || '').trim().toLowerCase();
-      const email = (queryOrFilter.email || '').trim().toLowerCase();
-
-      return this.data.requests
-        .filter((r) => {
-          if (uid) {
-            if (r.userId === uid) return true;
-            if (username && r.customerUsername && r.customerUsername.toLowerCase() === username) return true;
-            return false;
-          }
-          if (username && r.customerUsername && r.customerUsername.toLowerCase() === username) {
-            return true;
-          }
-          if (email && (r.userEmail?.toLowerCase() === email || r.customerEmail.toLowerCase() === email)) {
-            return true;
-          }
-          return false;
-        })
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }
-
-    const term = queryOrFilter.trim().toLowerCase();
+  public getUserRequests(uid: string): VideoRequest[] {
+    const cleanUid = (uid || '').trim();
+    if (!cleanUid) return [];
     return this.data.requests
-      .filter(
-        (r) =>
-          r.userId === queryOrFilter.trim() ||
-          (r.customerUsername && r.customerUsername.toLowerCase() === term) ||
-          r.userEmail?.toLowerCase() === term ||
-          r.customerEmail.toLowerCase() === term
-      )
+      .filter((r) => r.userId === cleanUid)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
@@ -647,99 +724,63 @@ class Database {
   }
 
   public createRequest(
-    requestData: Omit<VideoRequest, 'id' | 'accessToken' | 'createdAt' | 'updatedAt' | 'status' | 'statusHistory' | 'clarifications' | 'internalAdminNotes'>
-  ): { request: VideoRequest; isFreeTrial: boolean } {
-    // Generate IDs
+    requestData: Omit<
+      VideoRequest,
+      | 'id'
+      | 'accessToken'
+      | 'createdAt'
+      | 'updatedAt'
+      | 'status'
+      | 'statusHistory'
+      | 'clarifications'
+      | 'internalAdminNotes'
+      | 'requestType'
+      | 'pricingMessage'
+    >
+  ): VideoRequest {
     const randomHex = crypto.randomBytes(2).toString('hex').toUpperCase();
     const newId = `AVM-2026-${randomHex}`;
     const accessToken = `sec_${crypto.randomBytes(12).toString('hex')}`;
     const now = new Date().toISOString();
 
     const normalizedEmail = requestData.customerEmail.trim().toLowerCase();
-    const user = this.data.users.find(
-      (u) =>
-        (requestData.userId && u.uid === requestData.userId) ||
-        (requestData.customerUsername &&
-          u.username &&
-          u.username.toLowerCase() === requestData.customerUsername.trim().toLowerCase()) ||
-        u.email.toLowerCase() === normalizedEmail
-    );
+    const user = requestData.userId ? this.getUserByUid(requestData.userId) : undefined;
 
-    const isFreeTrial = requestData.requestType === 'free_trial';
+    const newRequest: VideoRequest = {
+      ...requestData,
+      customerUsername: requestData.customerUsername || user?.username || requestData.customerName,
+      id: newId,
+      accessToken,
+      createdAt: now,
+      updatedAt: now,
+      status: 'Submitted',
+      requestType: 'paid',
+      pricingMessage: 'The payment will be based on the video.',
+      quote:
+        requestData.quote || {
+          status: 'pending',
+          amount: 0,
+          currency: '₹',
+          formattedAmount: 'Quote pending review'
+        },
+      payment: requestData.payment || { status: 'pending' },
+      internalAdminNotes: [
+        `Submitted by customer ${requestData.customerUsername || user?.username || normalizedEmail} (Delivery Email: ${normalizedEmail}). The payment will be based on the video.`
+      ],
+      statusHistory: [
+        {
+          status: 'Submitted',
+          timestamp: now,
+          changedBy: 'customer',
+          note: 'Request submitted. The payment will be based on the video.'
+        }
+      ],
+      clarifications: []
+    };
 
-    // ATOMIC FREE TRIAL ENFORCEMENT
-    if (isFreeTrial) {
-      if (!user) {
-        throw new Error('A registered user account is required to claim a free trial.');
-      }
-      if (user.trialStatus !== 'eligible') {
-        throw new Error('This account has already used its one-time free trial. Please submit a paid video request.');
-      }
-
-      // Mark trial as used atomically
-      user.trialStatus = 'used';
-      user.trialUsedAt = now;
-      user.trialRequestId = newId;
-    }
-
-    try {
-      const newRequest: VideoRequest = {
-        ...requestData,
-        customerUsername: requestData.customerUsername || user?.username || requestData.customerName,
-        id: newId,
-        accessToken,
-        createdAt: now,
-        updatedAt: now,
-        status: 'Submitted',
-        pricingMessage: isFreeTrial
-          ? 'One-Time Free Trial'
-          : 'The payment will be based on the video.',
-        quote:
-          requestData.quote ||
-          (isFreeTrial
-            ? undefined
-            : {
-                status: 'pending',
-                amount: 0,
-                currency: '₹',
-                formattedAmount: 'Quote pending review'
-              }),
-        payment:
-          requestData.payment ||
-          (isFreeTrial
-            ? { status: 'not_required' }
-            : { status: 'pending' }),
-        internalAdminNotes: [
-          isFreeTrial
-            ? `Submitted as 1-Time Free Trial by user ${requestData.customerUsername || normalizedEmail} (Delivery Email: ${normalizedEmail}).`
-            : `Submitted as Paid Request (Delivery Email: ${normalizedEmail}). Price to be quoted based on creative brief.`
-        ],
-        statusHistory: [
-          {
-            status: 'Submitted',
-            timestamp: now,
-            changedBy: 'customer',
-            note: isFreeTrial
-              ? 'Request received via 1-time free trial.'
-              : 'Paid request submitted. Initial review pending.'
-          }
-        ],
-        clarifications: []
-      };
-
-      this.data.requests.unshift(newRequest);
-      this.persist({ ...this.data });
-      return { request: newRequest, isFreeTrial };
-    } catch (err) {
-      // Rollback trial eligibility if request saving failed
-      if (isFreeTrial && user) {
-        user.trialStatus = 'eligible';
-        user.trialUsedAt = undefined;
-        user.trialRequestId = undefined;
-        this.persist({ ...this.data });
-      }
-      throw err;
-    }
+    this.data.requests.unshift(newRequest);
+    this.persist({ ...this.data });
+    return newRequest;
   }
 
   public updateRequest(

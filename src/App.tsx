@@ -21,29 +21,27 @@ import { MyRequestsView } from './components/Customer/MyRequestsView.tsx';
 import { UserProfileModal } from './components/Customer/UserProfileModal.tsx';
 import { PrivacyModal, TermsModal, DataDeletionModal, ContactModal } from './components/Modals/LegalModals.tsx';
 import { DownloadAppBottomBar } from './components/DownloadApp/DownloadAppBottomBar.tsx';
+import { DownloadPage } from './components/DownloadApp/DownloadPage.tsx';
+import { DesktopUpdateBanner } from './components/DownloadApp/DesktopUpdateBanner.tsx';
 import { checkActiveSession, logoutDeviceUser, CACHED_USER_KEY } from './services/deviceIdentity.ts';
 import { ensureClientStorageReset } from './services/firestoreService.ts';
 import { UserAccount } from './types/client.ts';
 
-type MainView = 'landing' | 'builder' | 'success' | 'tracker' | 'budget_contact' | 'my_requests';
+type MainView =
+  | 'landing'
+  | 'builder'
+  | 'success'
+  | 'tracker'
+  | 'budget_contact'
+  | 'my_requests'
+  | 'download';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    ensureClientStorageReset();
-    try {
-      const cached = localStorage.getItem(CACHED_USER_KEY);
-      if (cached) return JSON.parse(cached);
-    } catch (e) {}
-    return null;
-  });
-  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(() => {
-    try {
-      if (localStorage.getItem(CACHED_USER_KEY)) return false;
-    } catch (e) {}
-    return true;
-  });
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
+  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
   const [pendingActionAfterAuth, setPendingActionAfterAuth] = useState<'builder' | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
+  const [isGuestDownloadOpen, setIsGuestDownloadOpen] = useState<boolean>(false);
 
   const [currentView, setCurrentView] = useState<MainView>('landing');
   const [selectedStyle, setSelectedStyle] = useState<string>('Realistic cinematic');
@@ -59,20 +57,18 @@ export default function App() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isContactOpen, setIsContactOpen] = useState(false);
 
-  // Validate active session with backend on load
+  // Validate active session strictly with backend on load
   useEffect(() => {
+    ensureClientStorageReset();
     let isMounted = true;
     checkActiveSession()
       .then((sessionUser) => {
         if (!isMounted) return;
-        if (sessionUser) {
-          setCurrentUser(sessionUser);
-        } else {
-          setCurrentUser(null);
-        }
+        setCurrentUser(sessionUser || null);
       })
       .catch((err) => {
         console.warn('Notice: Active session check error:', err);
+        if (isMounted) setCurrentUser(null);
       })
       .finally(() => {
         if (isMounted) setIsAuthInitializing(false);
@@ -83,7 +79,7 @@ export default function App() {
     };
   }, []);
 
-  // Check URL query parameters on load (e.g. ?id=VR-2026-8941&token=sec_... or ?admin=true or ?budget=true)
+  // Check URL query parameters & private admin route (/admin, /admin-login, ?admin=true)
   useEffect(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -92,9 +88,19 @@ export default function App() {
       const admin = urlParams.get('admin');
       const budget = urlParams.get('budget');
       const myReq = urlParams.get('my-requests');
+      const download = urlParams.get('download');
 
-      if (admin === 'true' || window.location.pathname === '/admin') {
+      if (
+        admin === 'true' ||
+        window.location.pathname === '/admin' ||
+        window.location.pathname === '/admin-login'
+      ) {
         setIsAdminOpen(true);
+      }
+
+      if (download === 'true' || window.location.pathname === '/download') {
+        setIsGuestDownloadOpen(true);
+        setCurrentView('download');
       }
 
       if (budget === 'true') {
@@ -109,7 +115,7 @@ export default function App() {
         setTrackParams({ id, token: token || '' });
         setCurrentView('tracker');
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
   }, []);
@@ -131,7 +137,6 @@ export default function App() {
     if (styleName) {
       setSelectedStyle(styleName);
     }
-    // If not signed in, set pending action
     if (!currentUser) {
       setPendingActionAfterAuth('builder');
       return;
@@ -160,12 +165,18 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleOpenDownloadPage = () => {
+    setIsGuestDownloadOpen(true);
+    setCurrentView('download');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleSignOut = async () => {
     try {
       localStorage.removeItem(CACHED_USER_KEY);
       localStorage.removeItem('aivm_cached_user');
       sessionStorage.removeItem('aivm_preview_mode');
-    } catch (e) {}
+    } catch {}
     await logoutDeviceUser();
     setCurrentUser(null);
     setCurrentView('landing');
@@ -174,7 +185,7 @@ export default function App() {
   const handleAuthSuccess = (userProfile: UserAccount) => {
     try {
       localStorage.setItem(CACHED_USER_KEY, JSON.stringify(userProfile));
-    } catch (e) {}
+    } catch {}
     setCurrentUser(userProfile);
     if (pendingActionAfterAuth === 'builder') {
       setPendingActionAfterAuth(null);
@@ -191,31 +202,55 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // 1. Initializing state: render LoadingScreen while checking auth (max 450ms safety timeout)
+  // Private admin view renders independently if visited via /admin or /admin-login or ?admin=true
+  if (isAdminOpen) {
+    return (
+      <div className="min-h-screen bg-[#050811]">
+        <AdminDashboard
+          onClose={() => {
+            setIsAdminOpen(false);
+            if (
+              window.location.pathname === '/admin' ||
+              window.location.pathname === '/admin-login' ||
+              window.location.search.includes('admin=true')
+            ) {
+              window.history.replaceState(null, '', '/');
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Initializing state
   if (isAuthInitializing && !currentUser) {
     return <LoadingScreen onTimeout={() => setIsAuthInitializing(false)} />;
   }
 
-  // 2. PROTECTED: Authentication-First Application
-  // Whenever a visitor opens AI Video Maker without an active session, show the Login / Sign-In page first.
-  // Never display the Home Page to an unauthenticated visitor.
+  // Opening screen when customer is not logged in
   if (!currentUser) {
     return (
       <div className="min-h-screen pb-24 relative bg-[#050811]">
-        <WelcomeScreen onSuccess={handleAuthSuccess} />
-        {/* Modals available for legal / admin */}
+        <DesktopUpdateBanner />
+        {isGuestDownloadOpen ? (
+          <DownloadPage onBack={() => setIsGuestDownloadOpen(false)} />
+        ) : (
+          <WelcomeScreen onSuccess={handleAuthSuccess} />
+        )}
         <PrivacyModal isOpen={isPrivacyOpen} onClose={() => setIsPrivacyOpen(false)} />
         <TermsModal isOpen={isTermsOpen} onClose={() => setIsTermsOpen(false)} />
-        {isAdminOpen && <AdminDashboard onClose={() => setIsAdminOpen(false)} />}
-        {/* Permanent fixed bottom Download Our App bar */}
-        <DownloadAppBottomBar />
+        <DownloadAppBottomBar
+          onOpenDownloadPage={handleOpenDownloadPage}
+          isOnDownloadPage={isGuestDownloadOpen}
+        />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen pb-24 bg-[#050811] text-slate-100 flex flex-col selection:bg-indigo-600/30 selection:text-white">
-      {/* Global Navbar */}
+      <DesktopUpdateBanner />
+      {/* Global Navbar (Customer-only, no admin links) */}
       <Navbar
         currentUser={currentUser}
         onNavigate={handleNavigate}
@@ -223,9 +258,9 @@ export default function App() {
         onTrackClick={() => handleOpenTracker()}
         onMyRequestsClick={handleOpenMyRequests}
         onProfileClick={() => setIsProfileOpen(true)}
-        onAdminClick={() => setIsAdminOpen(true)}
         onContactClick={() => setIsContactOpen(true)}
         onBudgetContactClick={handleOpenBudgetContact}
+        onDownloadAppClick={handleOpenDownloadPage}
         onSignInClick={() => {}}
         onSignOutClick={handleSignOut}
       />
@@ -261,7 +296,7 @@ export default function App() {
                   Launch the Studio Video Request Builder
                 </h3>
                 <p className="text-sm text-slate-300">
-                  Describe your idea, specify character consistency photos, and choose between a 1-time free trial or video-based payment.
+                  Describe your story, specify character consistency photos, and submit your request. The payment will be based on the video.
                 </p>
                 <div className="pt-2">
                   <button
@@ -331,9 +366,18 @@ export default function App() {
             }}
           />
         )}
+
+        {currentView === 'download' && (
+          <DownloadPage
+            onBack={() => {
+              setCurrentView('landing');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
+        )}
       </main>
 
-      {/* Global Footer */}
+      {/* Global Footer (Customer-only, no admin links) */}
       <Footer
         onNavigate={handleNavigate}
         onRequestClick={() => handleStartRequest()}
@@ -342,13 +386,10 @@ export default function App() {
         onPrivacyClick={() => setIsPrivacyOpen(true)}
         onTermsClick={() => setIsTermsOpen(true)}
         onDeleteRequestClick={() => setIsDeleteOpen(true)}
-        onAdminClick={() => setIsAdminOpen(true)}
         onContactClick={() => setIsContactOpen(true)}
         onBudgetContactClick={handleOpenBudgetContact}
+        onDownloadAppClick={handleOpenDownloadPage}
       />
-
-      {/* Private Admin Dashboard Modal */}
-      {isAdminOpen && <AdminDashboard onClose={() => setIsAdminOpen(false)} />}
 
       {/* Trust & Legal Modals */}
       <PrivacyModal isOpen={isPrivacyOpen} onClose={() => setIsPrivacyOpen(false)} />
@@ -369,7 +410,10 @@ export default function App() {
       )}
 
       {/* Permanent Fixed Bottom Download Our App Bar */}
-      <DownloadAppBottomBar />
+      <DownloadAppBottomBar
+        onOpenDownloadPage={handleOpenDownloadPage}
+        isOnDownloadPage={currentView === 'download'}
+      />
     </div>
   );
 }

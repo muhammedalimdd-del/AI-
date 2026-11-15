@@ -9,45 +9,30 @@ export type VideoStatus =
   | 'Delivered'
   | 'Cancelled';
 
-export type TrialStatus = 'eligible' | 'reserved' | 'used';
-
-export interface DeviceRegistration {
-  deviceId: string;
-  fingerprintHash: string;
-  registeredUserId: string;
-  registeredUsername: string;
-  ipSubnet: string;
-  userAgent: string;
-  firstRegisteredAt: string;
-  lastSeenAt: string;
-  registrationLockActive: boolean;
-}
-
 export interface AuthSession {
   token: string;
   userId: string;
   username: string;
-  deviceId: string;
+  role: 'customer' | 'admin';
   createdAt: string;
   expiresAt: string;
 }
 
 export interface UserAccount {
   uid: string; // User ID
-  username: string; // Unique locked username
-  email: string; // User email / contact email
+  username: string; // Unique username
+  email: string; // Optional customer recovery/contact email
   displayName: string;
-  passwordHash?: string; // Salted scrypt/PBKDF2 hash
+  passwordHash?: string; // Salted scrypt hash
   passwordSalt?: string; // Cryptographic salt
-  deviceId?: string; // Associated device ID
-  deviceFingerprint?: string; // Hardware/GPU canvas fingerprint
+  recoveryKeyHash?: string; // Salted scrypt hash for one-time recovery key
+  recoveryKeySalt?: string;
+  resetCodeHash?: string; // Salted hash for email OTP reset
+  resetCodeExpiresAt?: string;
   photoURL?: string;
   createdAt: string;
   lastLoginAt: string;
-  trialStatus: TrialStatus;
-  trialUsedAt?: string;
-  trialRequestId?: string;
-  role?: 'user' | 'admin';
+  role: 'customer' | 'admin';
 }
 
 export interface AuditLog {
@@ -154,8 +139,8 @@ export interface VideoRequest {
   // User & Request Type
   userId?: string;
   userEmail?: string;
-  requestType: 'free_trial' | 'paid';
-  pricingMessage: string; // "One-Time Free Trial" or "The payment will be based on the video."
+  requestType: 'paid';
+  pricingMessage: string; // "The payment will be based on the video."
   quote?: QuoteDetails;
   payment?: PaymentDetails;
 
@@ -250,9 +235,9 @@ export interface BudgetRequest {
   videoFormat: 'portrait' | 'landscape' | 'square';
   aspectRatio: string;
   preferredDuration: string;
-  budgetCategory: 'FREE' | 'BASIC' | 'STANDARD' | 'PREMIUM' | 'CUSTOM';
+  budgetCategory: 'STANDARD' | 'CUSTOM';
   budgetAmount: string;
-  isFree: boolean;
+  isFree?: boolean;
   referencePhotoUrl?: string;
   referencePhotoName?: string;
   additionalInstructions?: string;
@@ -276,6 +261,7 @@ export interface EmailLog {
     | 'budget_request_owner'
     | 'budget_request_customer'
     | 'budget_request_reply'
+    | 'password_reset'
     | 'test_connection';
   recipient: string;
   subject: string;
@@ -288,7 +274,6 @@ export interface EmailLog {
 
 export interface DatabaseSchema {
   users: UserAccount[];
-  devices: DeviceRegistration[];
   sessions: AuthSession[];
   requests: VideoRequest[];
   budgetRequests: BudgetRequest[];

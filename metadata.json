@@ -1,6 +1,6 @@
 {
-  "name": "AI Video Request Studio",
-  "description": "Premium platform to request custom AI-generated videos with detailed creative briefs, character references, scene builder, real-time tracking, and email delivery.",
+  "name": "AI TIMES — AI Video Maker",
+  "description": "AI TIMES (AI Video Maker): Request custom AI-generated videos with creative briefs, character references, scene builder, real-time tracking, and email delivery. The payment will be based on the video.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

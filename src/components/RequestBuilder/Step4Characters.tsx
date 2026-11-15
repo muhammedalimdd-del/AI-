@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { RequestFormData, CharacterItem } from '../../types/client.ts';
-import { Users, Plus, Trash2, Upload, CheckCircle2, AlertCircle, Image as ImageIcon, Sparkles, ShieldAlert, X } from 'lucide-react';
+import { Users, Plus, Trash2, AlertCircle, Image as ImageIcon, Sparkles, X } from 'lucide-react';
 import { safeResponseJson } from '../../services/apiClient.ts';
+import { getAuthHeaders } from '../../services/deviceIdentity.ts';
 
 interface Step4Props {
   data: RequestFormData;
@@ -68,6 +69,7 @@ export const Step4Characters: React.FC<Step4Props> = ({ data, updateData }) => {
 
         const res = await fetch('/api/upload', {
           method: 'POST',
+          headers: getAuthHeaders(),
           body: formData
         });
 

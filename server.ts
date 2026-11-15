@@ -4,27 +4,41 @@ import fs from 'fs';
 import multer from 'multer';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { db, UPLOADS_DIR } from './src/server/db.ts';
+import { db, UPLOADS_DIR, SafeUserAccount } from './src/server/db.ts';
 import { emailService } from './src/server/email.ts';
-import {
-  VideoRequest,
-  VideoStatus,
-  BudgetRequest,
-  BudgetRequestStatus,
-  TrialStatus
-} from './src/server/types.ts';
+import { AuthSession, BudgetRequestStatus } from './src/server/types.ts';
 
 dotenv.config();
+
+// Initialize private owner admin account ("ali") from server-side environment variable
+db.initAdminAccount(process.env.ADMIN_PASSWORD);
 
 const app = express();
 const isProd = process.env.NODE_ENV === 'production';
 // In AI Studio development, dev server must run on port 3000
 const PORT = isProd ? parseInt(process.env.PORT || '8080', 10) : 3000;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 // Configure express body parser
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Allow Electron desktop app and cross-origin clients to access API and installer endpoints cleanly
+app.use(['/api', '/downloads'], (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, x-session-token, Range'
+  );
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'Content-Length, Content-Disposition, Accept-Ranges, Content-Range'
+  );
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  return next();
+});
 
 // Multer storage for secure uploads
 const storage = multer.diskStorage({
@@ -62,7 +76,6 @@ const upload = multer({
   }
 });
 
-// Helper: base URL resolution
 function getBaseUrl(req: express.Request): string {
   if (process.env.APP_URL && !process.env.APP_URL.includes('MY_APP_URL')) {
     return process.env.APP_URL.replace(/\/$/, '');
@@ -73,25 +86,57 @@ function getBaseUrl(req: express.Request): string {
   return `${protocol}://${host}`;
 }
 
-const VALID_ADMIN_KEYS = new Set([
-  ADMIN_PASSWORD,
-  'admin123',
-  'videomaker2026',
-  'admin2026',
-  'admin',
-  'static_admin_token_2026'
-]);
-
-// Middleware: admin auth check
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+function extractSessionToken(req: express.Request): string {
   const authHeader = req.headers.authorization;
-  const adminKey = req.headers['x-admin-key'] as string;
-  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
-
-  if ((adminKey && VALID_ADMIN_KEYS.has(adminKey)) || (bearerToken && VALID_ADMIN_KEYS.has(bearerToken))) {
-    return next();
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
   }
-  return res.status(401).json({ error: 'Unauthorized: Admin authentication required' });
+  const sessionHeader = req.headers['x-session-token'];
+  if (typeof sessionHeader === 'string' && sessionHeader.trim()) {
+    return sessionHeader.trim();
+  }
+  return '';
+}
+
+interface AuthenticatedRequest extends express.Request {
+  authSession?: AuthSession;
+  authUser?: SafeUserAccount;
+  sessionToken?: string;
+}
+
+// Middleware: verified authenticated user (customer or admin)
+function requireAuth(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const token = extractSessionToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Please log in to continue.' });
+  }
+  const resolved = db.getSession(token);
+  if (!resolved) {
+    return res.status(401).json({ error: 'Unauthorized: Session expired or invalid. Please log in again.' });
+  }
+  req.authSession = resolved.session;
+  req.authUser = resolved.user;
+  req.sessionToken = token;
+  return next();
+}
+
+// Middleware: strict private admin check (requires verified opaque session with role === 'admin')
+function requireAdmin(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+  const token = extractSessionToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Admin authentication required.' });
+  }
+  const resolved = db.getSession(token);
+  if (!resolved) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or expired admin session.' });
+  }
+  if (resolved.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Forbidden: Administrator access required.' });
+  }
+  req.authSession = resolved.session;
+  req.authUser = resolved.user;
+  req.sessionToken = token;
+  return next();
 }
 
 // ================= API ROUTES =================
@@ -104,111 +149,130 @@ app.get('/api/health', (_req, res) => {
     ownerEmail: process.env.OWNER_NOTIFICATION_EMAIL || db.getSettings().ownerNotificationEmail,
     emailMode: process.env.SMTP_HOST
       ? 'smtp'
-      : process.env.EMAIL_PROVIDER_API_KEY
+      : process.env.RESEND_API_KEY || process.env.EMAIL_PROVIDER_API_KEY
       ? 'resend'
       : 'simulated'
   });
 });
 
-// ================= DEVICE-LOCKED AUTHENTICATION API ROUTES =================
+// ================= WINDOWS DESKTOP INSTALLER & AUTO-UPDATE ROUTES =================
 
-// 1. Check Device Registration Status (POST and GET supported)
-const handleDeviceStatus = (req: express.Request, res: express.Response) => {
+const DESKTOP_DOWNLOADS_DIR = path.resolve(process.cwd(), 'downloads');
+const WINDOWS_INSTALLER_FILENAME = 'AI-Video-Maker-Setup.exe';
+
+function getDesktopVersion(): string {
   try {
-    const deviceId = (req.body?.deviceId || req.query?.deviceId || '') as string;
-    const fingerprintHash = (req.body?.fingerprintHash || req.query?.fingerprintHash || '') as string;
-    const status = db.checkDeviceStatus(deviceId, fingerprintHash);
-    res.json({
-      success: true,
-      ...status
+    const latestYmlPath = path.join(DESKTOP_DOWNLOADS_DIR, 'latest.yml');
+    if (fs.existsSync(latestYmlPath)) {
+      const content = fs.readFileSync(latestYmlPath, 'utf-8');
+      const match = content.match(/^version:\s*([^\s\r\n]+)/m);
+      if (match?.[1]) return match[1].trim();
+    }
+    const pkgPath = path.resolve(process.cwd(), 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg?.version) return String(pkg.version);
+    }
+  } catch {}
+  return '1.0.0';
+}
+
+function formatSizeMb(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 MB';
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+app.get('/api/desktop/info', (_req, res) => {
+  const exePath = path.join(DESKTOP_DOWNLOADS_DIR, WINDOWS_INSTALLER_FILENAME);
+  const exists = fs.existsSync(exePath) && fs.statSync(exePath).isFile();
+  const stat = exists ? fs.statSync(exePath) : null;
+
+  res.json({
+    available: exists,
+    appName: 'AI Video Maker',
+    version: getDesktopVersion(),
+    fileName: WINDOWS_INSTALLER_FILENAME,
+    sizeBytes: stat ? stat.size : 0,
+    sizeFormatted: stat ? formatSizeMb(stat.size) : 'Unavailable',
+    updatedAt: stat ? stat.mtime.toISOString() : null,
+    platform: 'Windows 10 & Windows 11 (64-bit)',
+    downloadUrl: `/downloads/${WINDOWS_INSTALLER_FILENAME}`
+  });
+});
+
+app.get('/downloads/:filename', (req, res) => {
+  const requestedName = path.basename(req.params.filename || '');
+  const allowedFiles = [
+    WINDOWS_INSTALLER_FILENAME,
+    'latest.yml',
+    `${WINDOWS_INSTALLER_FILENAME}.blockmap`
+  ];
+
+  if (!allowedFiles.includes(requestedName)) {
+    return res.status(404).json({
+      success: false,
+      error: 'Requested desktop download file not found.'
     });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
   }
-};
-app.post('/api/device/status', handleDeviceStatus);
-app.get('/api/device/status', handleDeviceStatus);
 
-// 2. First-Time Device Account Creation
-const handleRegisterDevice = (req: express.Request, res: express.Response) => {
+  const filePath = path.join(DESKTOP_DOWNLOADS_DIR, requestedName);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return res.status(404).json({
+      success: false,
+      error: `${requestedName} is not available yet. Run the desktop build to generate it.`
+    });
+  }
+
+  if (requestedName.endsWith('.exe')) {
+    res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
+    res.setHeader('Content-Disposition', `attachment; filename="${requestedName}"`);
+  } else if (requestedName.endsWith('.yml')) {
+    res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+  } else {
+    res.setHeader('Content-Type', 'application/octet-stream');
+  }
+
+  res.setHeader('Cache-Control', 'no-cache');
+  return res.sendFile(filePath);
+});
+
+// ================= CUSTOMER AUTHENTICATION API ROUTES =================
+
+// Register new customer account (username + password + confirmPassword, optional recovery email)
+const handleCustomerRegister = (req: express.Request, res: express.Response) => {
   try {
-    const {
-      fullName,
-      displayName,
-      email,
-      contactEmail,
+    const { username, password, confirmPassword, email } = req.body || {};
+    const result = db.registerCustomerAccount({
       username,
       password,
       confirmPassword,
-      deviceId,
-      fingerprintHash,
-      passwordHash,
-      passwordSalt,
-      uid
-    } = req.body || {};
-
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required.' });
-    }
-    if (confirmPassword !== undefined && password !== confirmPassword) {
-      return res.status(400).json({ error: 'Passwords do not match. Please verify and try again.' });
-    }
-
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-    const userAgent = req.headers['user-agent'] || '';
-
-    const result = db.registerDeviceAccount({
-      fullName: fullName || displayName || username,
-      email: email || contactEmail,
-      contactEmail: contactEmail || email,
-      username,
-      password,
-      confirmPassword,
-      deviceId,
-      fingerprintHash,
-      ipSubnet: String(clientIp).split(',')[0].trim(),
-      userAgent: String(userAgent),
-      passwordHash,
-      passwordSalt,
-      uid
+      email
     });
 
-    res.json({
+    res.status(201).json({
       success: true,
       user: result.user,
       token: result.session.token,
-      deviceId: result.device.deviceId,
+      recoveryKey: result.recoveryKey,
       message: 'Account created successfully.'
     });
   } catch (err: any) {
     const isConflict =
       err.message &&
-      (err.message.includes('already permanently registered') ||
-        err.message.includes('already registered') ||
-        err.message.includes('already taken'));
+      (err.message.includes('already taken') || err.message.includes('reserved'));
     res.status(isConflict ? 409 : 400).json({
       error: err.message || 'Failed to create account.'
     });
   }
 };
-app.post('/api/auth/register-device', handleRegisterDevice);
-app.post('/api/auth/register', handleRegisterDevice);
-app.post('/api/register', handleRegisterDevice);
+app.post('/api/auth/register', handleCustomerRegister);
+app.post('/api/register', handleCustomerRegister);
 
-// 3. Returning User Device Login
-const handleLoginDevice = (req: express.Request, res: express.Response) => {
+// Customer Login (username + password only; never auto-creates accounts)
+const handleCustomerLogin = (req: express.Request, res: express.Response) => {
   try {
-    const { username, password, deviceId, fingerprintHash } = req.body || {};
-
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-
-    const result = db.loginDeviceAccount({
-      username,
-      password,
-      deviceId,
-      fingerprintHash,
-      ipSubnet: String(clientIp).split(',')[0].trim()
-    });
+    const { username, password } = req.body || {};
+    const result = db.loginCustomerAccount({ username, password });
 
     res.json({
       success: true,
@@ -217,54 +281,81 @@ const handleLoginDevice = (req: express.Request, res: express.Response) => {
     });
   } catch (err: any) {
     res.status(401).json({
-      error: err.message || 'Invalid username or password. Please try again.'
+      error: err.message || 'Incorrect username or password. Please try again.'
     });
   }
 };
-app.post('/api/auth/login-device', handleLoginDevice);
-app.post('/api/auth/login', handleLoginDevice);
-app.post('/api/login', handleLoginDevice);
+app.post('/api/auth/login', handleCustomerLogin);
+app.post('/api/login', handleCustomerLogin);
 
-// 3b. Sync verified device user from Firestore / Cloud
-app.post('/api/auth/sync-device-user', (req, res) => {
+// Password Reset Step 1: Request reset code (via registered email if available, or confirm recovery key fallback)
+app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { user, device, session } = req.body || {};
-    if (!user || !user.uid || !user.username) {
-      return res.status(400).json({ error: 'Valid user record is required for sync.' });
+    const { username, email } = req.body || {};
+    if (!username || !String(username).trim()) {
+      return res.status(400).json({ error: 'Please enter your username.' });
     }
-    const synced = db.syncDeviceUserFromCloud({ user, device, session });
-    res.json({
+
+    const result = db.requestCustomerPasswordReset({ username: String(username), email });
+    if (result.canSendEmail && result.email && result.code && result.username) {
+      await emailService
+        .sendPasswordResetCode(result.email, result.username, result.code)
+        .catch((err) => console.error('Failed to send reset code email:', err));
+
+      return res.json({
+        success: true,
+        method: 'email_or_key',
+        message: 'If a recovery email is linked to this username, a 6-digit verification code has been sent. You may also use your personal Recovery Key.'
+      });
+    }
+
+    return res.json({
       success: true,
-      user: synced.user,
-      token: synced.token
+      method: 'recovery_key',
+      message: 'Enter your personal Recovery Key (provided when you created your account) to set a new password.'
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to sync device user.' });
+    res.status(500).json({ error: err.message || 'Failed to initiate password reset.' });
   }
 });
 
-// 4. Validate Current Session (GET and POST supported)
+// Password Reset Step 2: Verify OTP or Recovery Key and set new password
+app.post('/api/auth/reset-password', (req, res) => {
+  try {
+    const { username, resetCodeOrKey, newPassword, confirmPassword } = req.body || {};
+    db.completeCustomerPasswordReset({
+      username,
+      resetCodeOrKey,
+      newPassword,
+      confirmPassword
+    });
+    res.json({
+      success: true,
+      message: 'Password updated successfully. You can now log in with your new password.'
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Password reset failed.' });
+  }
+});
+
+// Validate Current Session (GET and POST supported)
 const handleSessionCheck = (req: express.Request, res: express.Response) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token =
-      (req.headers['x-session-token'] as string) ||
-      (authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null) ||
-      (req.body?.token as string) ||
-      (req.query?.token as string);
+    const headerToken = extractSessionToken(req);
+    const token = headerToken || (req.body?.token as string) || (req.query?.token as string) || '';
 
     if (!token) {
       return res.status(401).json({ error: 'No active session token provided.' });
     }
 
-    const user = db.getSessionUser(token);
-    if (!user) {
+    const resolved = db.getSession(token);
+    if (!resolved) {
       return res.status(401).json({ error: 'Session expired or invalid.' });
     }
 
     res.json({
       success: true,
-      user
+      user: resolved.user
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -273,96 +364,34 @@ const handleSessionCheck = (req: express.Request, res: express.Response) => {
 app.get('/api/auth/session', handleSessionCheck);
 app.post('/api/auth/session', handleSessionCheck);
 
-// 5. User Sign Out (Session revocation; device remains permanently locked)
+// Sign Out (Session revocation)
 app.post('/api/auth/logout', (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token =
-      (req.headers['x-session-token'] as string) ||
-      (authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null);
-
+    const token = extractSessionToken(req);
     if (token) {
       db.revokeSession(token);
     }
-
     res.json({
       success: true,
-      message: 'Signed out successfully. Device registration preserved.'
+      message: 'Signed out successfully.'
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 6. Get User Profile & Trial Eligibility
-app.get('/api/auth/me', (req, res) => {
-  const uid = (req.headers['x-user-uid'] as string) || (req.query.uid as string);
-  const username = (req.headers['x-username'] as string) || (req.query.username as string);
-  const email = (req.headers['x-user-email'] as string) || (req.query.email as string);
-
-  let user = null;
-  if (uid) user = db.getUserByUid(uid);
-  if (!user && username) user = db.getUserByUsername(username);
-  if (!user && email) user = db.getUserByEmail(email);
-
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
+// Authenticated User Profile
+app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res) => {
   res.json({
     success: true,
-    user: db.getUserByUid(user.uid)
+    user: req.authUser
   });
 });
 
-// Google Account Auth Sync Fallback
-app.post('/api/auth/google-sync', (req, res) => {
-  try {
-    const { uid, email, displayName, photoURL } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Valid email is required.' });
-    }
-    const user = db.syncUser({
-      uid: uid || `g-user-${crypto.randomBytes(6).toString('hex')}`,
-      email,
-      displayName,
-      photoURL
-    });
+// ================= MEDIA & UPLOAD ROUTES =================
 
-    res.json({
-      success: true,
-      user
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to sync user profile.' });
-  }
-});
-
-app.get('/api/user/trial-eligibility', (req, res) => {
-  const email = (req.query.email as string) || (req.headers['x-user-email'] as string);
-  const uid = (req.query.uid as string) || (req.headers['x-user-uid'] as string);
-
-  let user = null;
-  if (uid) user = db.getUserByUid(uid);
-  if (!user && email) user = db.getUserByEmail(email);
-
-  if (!user) {
-    return res.json({
-      eligible: true, // Default prospective eligibility for new users
-      trialStatus: 'eligible'
-    });
-  }
-
-  res.json({
-    eligible: user.trialStatus === 'eligible',
-    trialStatus: user.trialStatus,
-    trialUsedAt: user.trialUsedAt,
-    trialRequestId: user.trialRequestId
-  });
-});
-
-// 4. Secure file upload
-app.post('/api/upload', upload.single('file'), (req, res) => {
+// Secure file upload (requires authenticated customer or admin session)
+app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -378,7 +407,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// 5. Media serving
+// Media serving (used for character references in admin emails and completed videos)
 app.get('/api/media/:filename', (req, res) => {
   const filename = path.basename(req.params.filename);
   const filePath = path.join(UPLOADS_DIR, filename);
@@ -390,14 +419,13 @@ app.get('/api/media/:filename', (req, res) => {
   res.sendFile(filePath);
 });
 
-// 6. Create Video Request (Supports One-Time Free Trial & Paid Video Request)
-app.post('/api/requests', async (req, res) => {
+// ================= VIDEO REQUEST ROUTES (ISOLATED PER CUSTOMER) =================
+
+// Create Video Request (Authenticated Customer Only — Paid Video-Based Workflow)
+app.post('/api/requests', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    const authUser = req.authUser!;
     const {
-      userId,
-      userEmail,
-      customerUsername,
-      requestType, // 'free_trial' | 'paid'
       title,
       videoType,
       purpose,
@@ -435,7 +463,6 @@ app.post('/api/requests', async (req, res) => {
       termsAccepted
     } = req.body;
 
-    // Validation
     if (!title || !title.trim()) {
       return res.status(400).json({ error: 'Request title is required.' });
     }
@@ -451,31 +478,8 @@ app.post('/api/requests', async (req, res) => {
       return res.status(400).json({ error: 'You must agree to the Terms and Privacy Policy.' });
     }
 
-    const type: 'free_trial' | 'paid' = requestType === 'free_trial' ? 'free_trial' : 'paid';
-
-    // Synchronize or find user account (check UID and username first so device-locked accounts stay linked)
-    let user = userId ? db.getUserByUid(userId) : undefined;
-    if (!user && customerUsername) {
-      user = db.getUserByUsername(customerUsername);
-    }
-    if (!user && userEmail) {
-      user = db.getUserByEmail(userEmail);
-    }
-    if (!user) {
-      user = db.getUserByEmail(finalCustomerEmail);
-    }
-    if (!user) {
-      user = db.syncUser({
-        uid: userId || `usr-${crypto.randomBytes(6).toString('hex')}`,
-        email: finalCustomerEmail,
-        displayName: customerName.trim()
-      });
-    }
-
-    const resolvedUsername = customerUsername || user.username || user.displayName || customerName.trim();
-
-    // Prevent duplicate rapid submissions (within 30 seconds for the same customer email + title)
-    const recentDuplicate = db.getAllRequests().find(
+    // Prevent duplicate rapid submissions (within 30 seconds for the same user + title)
+    const recentDuplicate = db.getUserRequests(authUser.uid).find(
       (r) =>
         r.customerEmail.toLowerCase() === finalCustomerEmail &&
         r.title.trim().toLowerCase() === title.trim().toLowerCase() &&
@@ -486,7 +490,6 @@ app.post('/api/requests', async (req, res) => {
       return res.status(200).json({
         success: true,
         request: recentDuplicate,
-        isFreeTrial: recentDuplicate.requestType === 'free_trial',
         duplicatePrevented: true,
         message: 'Your video request has already been submitted and notification was processed.',
         emailNotification: {
@@ -498,16 +501,10 @@ app.post('/api/requests', async (req, res) => {
       });
     }
 
-    // Atomic creation with Free Trial verification
-    const { request: created, isFreeTrial } = db.createRequest({
-      userId: user.uid,
-      userEmail: user.email,
-      customerUsername: resolvedUsername,
-      requestType: type,
-      pricingMessage:
-        type === 'free_trial'
-          ? 'One-Time Free Trial'
-          : 'The payment will be based on the video.',
+    const created = db.createRequest({
+      userId: authUser.uid,
+      userEmail: authUser.email || finalCustomerEmail,
+      customerUsername: authUser.username,
       title: title.trim(),
       videoType: videoType || 'Custom AI Video',
       purpose: purpose || 'Entertainment',
@@ -565,7 +562,6 @@ app.post('/api/requests', async (req, res) => {
     return res.status(201).json({
       success: true,
       request: created,
-      isFreeTrial,
       message: ownerEmailResult.success
         ? 'Your video request has been submitted and sent to muhammedalimdd@gmail.com!'
         : 'Your video request has been saved. Admin email notification is queued.',
@@ -585,107 +581,108 @@ app.post('/api/requests', async (req, res) => {
   }
 });
 
-// 7. Get Customer Requests (My Requests - strictly isolated per user account)
-app.get('/api/user/requests', (req, res) => {
-  const email = (req.query.email as string) || (req.headers['x-user-email'] as string);
-  const uid = (req.query.uid as string) || (req.headers['x-user-uid'] as string);
-  const username = (req.query.username as string) || (req.headers['x-username'] as string);
-
-  if (!email && !uid && !username) {
-    return res.status(400).json({ error: 'User UID, username, or email is required' });
-  }
-
-  const requests = db.getUserRequests({ uid, username, email });
+// Get Customer Requests (Strictly isolated to authenticated user UID)
+app.get('/api/user/requests', requireAuth, (req: AuthenticatedRequest, res) => {
+  const requests = db.getUserRequests(req.authUser!.uid);
   res.json({
     success: true,
     requests
   });
 });
 
-// 8. Track Video Request (POST Endpoint with verification)
+// Track Video Request (POST: requires authenticated owner/admin OR matching secret accessToken)
 app.post('/api/requests/track', (req, res) => {
   try {
-    const { requestId, emailOrToken } = req.body;
-    if (!requestId || !requestId.trim()) {
+    const { requestId, emailOrToken } = req.body || {};
+    if (!requestId || !String(requestId).trim()) {
       return res.status(400).json({ error: 'Request ID is required.' });
     }
 
-    const reqId = requestId.trim();
-    const key = (emailOrToken || '').trim().toLowerCase();
+    const reqId = String(requestId).trim();
+    const key = String(emailOrToken || '').trim().toLowerCase();
 
     const request = db.getRequestById(reqId);
     if (!request) {
       return res.status(404).json({ error: 'Request not found with this ID.' });
     }
 
-    if (key) {
-      const isEmailMatch = request.customerEmail.toLowerCase() === key;
-      const isTokenMatch = request.accessToken.toLowerCase() === key;
-      const isUserEmailMatch = request.userEmail && request.userEmail.toLowerCase() === key;
+    const sessionToken = extractSessionToken(req);
+    const resolvedSession = sessionToken ? db.getSession(sessionToken) : null;
 
-      if (!isEmailMatch && !isTokenMatch && !isUserEmailMatch) {
-        return res.status(403).json({ error: 'Verification failed. Email or Access Token does not match.' });
+    if (resolvedSession) {
+      const isAdmin = resolvedSession.user.role === 'admin';
+      const isOwner = request.userId === resolvedSession.user.uid;
+      if (!isAdmin && !isOwner) {
+        return res.status(403).json({ error: 'Access denied: This request belongs to another customer account.' });
       }
+      if (key) {
+        const isEmailMatch = request.customerEmail.toLowerCase() === key;
+        const isTokenMatch = request.accessToken.toLowerCase() === key;
+        if (!isEmailMatch && !isTokenMatch) {
+          return res.status(403).json({ error: 'Verification failed. Email or Access Token does not match.' });
+        }
+      }
+      return res.json({ success: true, request });
     }
 
-    res.json({ success: true, request });
+    // Unauthenticated lookup requires secret accessToken
+    if (!key || request.accessToken.toLowerCase() !== key) {
+      return res.status(401).json({ error: 'Please log in or provide your valid secret Access Token.' });
+    }
+
+    return res.json({ success: true, request });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Error tracking request.' });
   }
 });
 
-// Public Track Video Request by ID and Token (GET)
+// Get Video Request by ID (Strictly isolated: owner, admin, or valid accessToken)
 app.get('/api/requests/:id', (req, res) => {
   const id = req.params.id;
-  const token = req.query.token as string;
+  const queryToken = String(req.query.token || '').trim();
+  const sessionToken = extractSessionToken(req);
+  const resolvedSession = sessionToken ? db.getSession(sessionToken) : null;
 
   const request = db.getRequestById(id);
   if (!request) {
     return res.status(404).json({ error: 'Request not found' });
   }
 
-  if (token) {
-    if (request.accessToken.toLowerCase() !== token.toLowerCase()) {
-      return res.status(403).json({ error: 'Invalid access token for this request' });
-    }
+  if (queryToken && request.accessToken.toLowerCase() === queryToken.toLowerCase()) {
     return res.json({ success: true, request });
   }
 
-  // Sanitized view
-  res.json({
-    success: true,
-    request: {
-      id: request.id,
-      title: request.title,
-      status: request.status,
-      createdAt: request.createdAt,
-      updatedAt: request.updatedAt,
-      requestType: request.requestType,
-      pricingMessage: request.pricingMessage,
-      quote: request.quote,
-      payment: request.payment,
-      style: request.style,
-      duration: request.duration,
-      format: request.format,
-      aspectRatio: request.aspectRatio,
-      customerVisibleNotes: request.customerVisibleNotes,
-      statusHistory: request.statusHistory,
-      completedVideo: request.completedVideo
+  if (resolvedSession) {
+    const isAdmin = resolvedSession.user.role === 'admin';
+    const isOwner = request.userId === resolvedSession.user.uid;
+    if (isAdmin || isOwner) {
+      return res.json({ success: true, request });
     }
-  });
+    return res.status(403).json({ error: 'Access denied: You do not have permission to view this request.' });
+  }
+
+  return res.status(401).json({ error: 'Unauthorized: Please log in to view your video request.' });
 });
 
-// 9. Customer Quote Action (Accept / Decline)
-app.post('/api/requests/:id/quote-action', (req, res) => {
+// Customer Quote Action (Accept / Decline) — Strictly owner or admin
+app.post('/api/requests/:id/quote-action', requireAuth, (req: AuthenticatedRequest, res) => {
   try {
     const id = req.params.id;
-    const { action, customerEmail } = req.body;
+    const { action, customerEmail } = req.body || {};
 
     if (!['accept', 'decline'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action. Must be accept or decline.' });
     }
 
-    const updated = db.respondToQuote(id, action, customerEmail);
+    const request = db.getRequestById(id);
+    if (!request) {
+      return res.status(404).json({ error: 'Request not found.' });
+    }
+    if (req.authUser!.role !== 'admin' && request.userId !== req.authUser!.uid) {
+      return res.status(403).json({ error: 'Forbidden: You cannot act on another customer\'s quote.' });
+    }
+
+    const updated = db.respondToQuote(id, action, customerEmail || req.authUser!.username);
     if (!updated) {
       return res.status(404).json({ error: 'Request not found or no quote available.' });
     }
@@ -699,13 +696,13 @@ app.post('/api/requests/:id/quote-action', (req, res) => {
   }
 });
 
-// Customer Clarification Message
-app.post('/api/requests/:id/customer-message', async (req, res) => {
+// Customer Clarification Message — Strictly owner or admin
+app.post('/api/requests/:id/customer-message', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const id = req.params.id;
-    const { message, token, email } = req.body;
+    const { message } = req.body || {};
 
-    if (!message || !message.trim()) {
+    if (!message || !String(message).trim()) {
       return res.status(400).json({ error: 'Message cannot be empty.' });
     }
 
@@ -713,14 +710,13 @@ app.post('/api/requests/:id/customer-message', async (req, res) => {
     if (!request) {
       return res.status(404).json({ error: 'Request not found.' });
     }
-
-    if (token && request.accessToken.toLowerCase() !== token.toLowerCase()) {
-      return res.status(403).json({ error: 'Unauthorized: Invalid access token.' });
+    if (req.authUser!.role !== 'admin' && request.userId !== req.authUser!.uid) {
+      return res.status(403).json({ error: 'Forbidden: You cannot message on another customer\'s request.' });
     }
 
-    const updated = db.addCustomerClarification(id, message.trim());
+    const updated = db.addCustomerClarification(id, String(message).trim());
     const baseUrl = getBaseUrl(req);
-    emailService.sendCustomerReplyNotification(updated || request, message.trim(), baseUrl).catch(console.error);
+    emailService.sendCustomerReplyNotification(updated || request, String(message).trim(), baseUrl).catch(console.error);
 
     res.json({ success: true, request: updated || request });
   } catch (err: any) {
@@ -728,28 +724,44 @@ app.post('/api/requests/:id/customer-message', async (req, res) => {
   }
 });
 
-// GDPR / Data Erasure Request
-app.post('/api/privacy/delete-request', (req, res) => {
+// GDPR / Data Erasure Request — Strictly owner or admin
+app.post('/api/privacy/delete-request', requireAuth, (req: AuthenticatedRequest, res) => {
   try {
-    const { email, requestId } = req.body;
+    const { email, requestId } = req.body || {};
     if (!email && !requestId) {
       return res.status(400).json({ error: 'Email or Request ID is required for data deletion.' });
     }
 
-    const deleted = db.deleteVideoRequest(requestId, email);
+    if (requestId) {
+      const target = db.getRequestById(String(requestId));
+      if (!target) {
+        return res.json({ success: true, message: 'No matching records found for deletion.' });
+      }
+      if (req.authUser!.role !== 'admin' && target.userId !== req.authUser!.uid) {
+        return res.status(403).json({ error: 'Forbidden: You can only delete your own requests.' });
+      }
+      db.deleteVideoRequest(String(requestId));
+    } else if (email) {
+      const userRequests = db.getUserRequests(req.authUser!.uid);
+      const matching = userRequests.filter(
+        (r) => r.customerEmail.toLowerCase() === String(email).trim().toLowerCase()
+      );
+      for (const r of matching) {
+        db.deleteVideoRequest(r.id);
+      }
+    }
+
     res.json({
       success: true,
-      message: deleted
-        ? 'Your request data and attached creative references have been permanently removed.'
-        : 'No matching records found for deletion.'
+      message: 'Your matching request data and attached creative references have been permanently removed.'
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to process privacy deletion request.' });
   }
 });
 
-// 10. Budget / Idea Request Public Submission
-app.post('/api/budget-requests', async (req, res) => {
+// Budget / Idea Request Submission (Authenticated Customer — No Free Option, Video-Based Payment)
+app.post('/api/budget-requests', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const {
       fullName,
@@ -764,46 +776,33 @@ app.post('/api/budget-requests', async (req, res) => {
       referencePhotoUrl,
       referencePhotoName,
       additionalInstructions
-    } = req.body;
+    } = req.body || {};
 
-    if (!fullName || !fullName.trim()) {
+    if (!fullName || !String(fullName).trim()) {
       return res.status(400).json({ error: 'Full Name is required.' });
     }
-    if (!email || !email.includes('@')) {
+    if (!email || !String(email).includes('@')) {
       return res.status(400).json({ error: 'Valid email address is required.' });
     }
-    if (!videoIdea || !videoIdea.trim()) {
+    if (!videoIdea || !String(videoIdea).trim()) {
       return res.status(400).json({ error: 'Video Idea description is required.' });
     }
 
-    const category = budgetCategory || 'FREE';
-    let budgetAmount = '₹0';
-    let isFree = true;
-
-    if (category === 'BASIC') {
-      budgetAmount = '₹99';
-      isFree = false;
-    } else if (category === 'STANDARD') {
-      budgetAmount = '₹299';
-      isFree = false;
-    } else if (category === 'PREMIUM') {
-      budgetAmount = '₹499';
-      isFree = false;
-    } else if (category === 'CUSTOM') {
-      budgetAmount = customBudgetAmount ? `₹${customBudgetAmount}` : 'Custom';
-      isFree = false;
-    }
+    const category: 'STANDARD' | 'CUSTOM' = budgetCategory === 'CUSTOM' ? 'CUSTOM' : 'STANDARD';
+    const budgetAmount =
+      category === 'CUSTOM' && customBudgetAmount
+        ? `Target: ${String(customBudgetAmount).trim()} (The payment will be based on the video.)`
+        : 'The payment will be based on the video.';
 
     let aspectRatio = '16:9';
     if (videoFormat === 'portrait') aspectRatio = '9:16';
     if (videoFormat === 'square') aspectRatio = '1:1';
 
-    // Prevent duplicate rapid budget submissions (within 30 seconds for the same email + idea)
-    const normalizedBudgetEmail = email.trim().toLowerCase();
+    const normalizedBudgetEmail = String(email).trim().toLowerCase();
     const recentBudgetDuplicate = db.getAllBudgetRequests().find(
       (b) =>
         b.email.toLowerCase() === normalizedBudgetEmail &&
-        b.videoIdea.trim().toLowerCase() === videoIdea.trim().toLowerCase() &&
+        b.videoIdea.trim().toLowerCase() === String(videoIdea).trim().toLowerCase() &&
         Date.now() - new Date(b.createdAt).getTime() < 30000
     );
 
@@ -823,17 +822,17 @@ app.post('/api/budget-requests', async (req, res) => {
     }
 
     const created = db.createBudgetRequest({
-      fullName: fullName.trim(),
+      fullName: String(fullName).trim(),
       email: normalizedBudgetEmail,
-      videoIdea: videoIdea.trim(),
-      detailedMessage: detailedMessage ? detailedMessage.trim() : undefined,
+      videoIdea: String(videoIdea).trim(),
+      detailedMessage: detailedMessage ? String(detailedMessage).trim() : undefined,
       preferredVideoType: preferredVideoType || 'cinematic',
       videoFormat: videoFormat || 'landscape',
       aspectRatio,
       preferredDuration: preferredDuration || '30 seconds',
       budgetCategory: category,
       budgetAmount,
-      isFree,
+      isFree: false,
       referencePhotoUrl: referencePhotoUrl || '',
       referencePhotoName: referencePhotoName || '',
       additionalInstructions: additionalInstructions || '',
@@ -878,8 +877,8 @@ app.post('/api/budget-requests', async (req, res) => {
   }
 });
 
-// 10b. Dedicated Secure Backend API Endpoint for Request Email Notification via Resend
-const handleSendRequestNotificationEmail = async (req: express.Request, res: express.Response) => {
+// Request Email Notification via Resend (Authenticated owner or admin)
+const handleSendRequestNotificationEmail = async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { requestId, forceRetry } = req.body || {};
     if (!requestId || typeof requestId !== 'string') {
@@ -892,6 +891,9 @@ const handleSendRequestNotificationEmail = async (req: express.Request, res: exp
     const baseUrl = getBaseUrl(req);
     const videoReq = db.getRequestById(requestId.trim());
     if (videoReq) {
+      if (req.authUser!.role !== 'admin' && videoReq.userId !== req.authUser!.uid) {
+        return res.status(403).json({ success: false, error: 'Forbidden' });
+      }
       const result = await emailService.sendOwnerNewRequestNotification(videoReq, baseUrl, {
         forceRetry: Boolean(forceRetry)
       });
@@ -936,7 +938,7 @@ const handleSendRequestNotificationEmail = async (req: express.Request, res: exp
 
     return res.status(404).json({
       success: false,
-      error: 'Cannot send email notification: Request ID not found. Notifications are sent only after a request is submitted.'
+      error: 'Cannot send email notification: Request ID not found.'
     });
   } catch (err: any) {
     return res.status(500).json({
@@ -946,29 +948,86 @@ const handleSendRequestNotificationEmail = async (req: express.Request, res: exp
   }
 };
 
-app.post('/api/notifications/send-request-email', handleSendRequestNotificationEmail);
-app.post('/api/send-request-email', handleSendRequestNotificationEmail);
+app.post('/api/notifications/send-request-email', requireAuth, handleSendRequestNotificationEmail);
+app.post('/api/send-request-email', requireAuth, handleSendRequestNotificationEmail);
 
-// ================= ADMIN API ROUTES =================
+// ================= PRIVATE ADMIN API ROUTES =================
 
-// Admin Login
-app.post('/api/admin/login', (req, res) => {
-  const { password } = req.body;
-  if (password && VALID_ADMIN_KEYS.has(password)) {
-    return res.json({ success: true, token: password });
-  }
-  return res.status(401).json({ error: 'Incorrect administrator password.' });
+// Check whether admin account ("ali") is initialized
+app.get('/api/admin/bootstrap-status', (_req, res) => {
+  res.json({
+    initialized: db.hasAdminAccount()
+  });
 });
 
-// 11. Admin Video Requests List & Stats
+// One-time initial admin password setup (only works if ADMIN_PASSWORD env was unset AND admin doesn't have a password yet)
+app.post('/api/admin/setup-initial-password', (req, res) => {
+  try {
+    if (db.hasAdminAccount()) {
+      return res.status(403).json({ error: 'Admin account is already initialized.' });
+    }
+    const { password, confirmPassword } = req.body || {};
+    const result = db.setupInitialAdminPassword({ password, confirmPassword });
+    return res.json({
+      success: true,
+      user: result.user,
+      token: result.session.token
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Failed to initialize admin password.' });
+  }
+});
+
+// Admin Login (Requires username "ali" and verified scrypt password; returns opaque session token)
+app.post('/api/admin/login', (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    const result = db.loginAdminAccount({ username, password });
+    return res.json({
+      success: true,
+      user: result.user,
+      token: result.session.token
+    });
+  } catch (err: any) {
+    return res.status(401).json({ error: err.message || 'Incorrect admin username or password.' });
+  }
+});
+
+// Verify active admin session
+app.get('/api/admin/session', requireAdmin, (req: AuthenticatedRequest, res) => {
+  res.json({
+    success: true,
+    user: req.authUser
+  });
+});
+
+// Admin Change Password
+app.post('/api/admin/change-password', requireAdmin, (req: AuthenticatedRequest, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
+    db.changeAdminPassword({
+      adminUid: req.authUser!.uid,
+      currentPassword,
+      newPassword,
+      confirmPassword,
+      keepToken: req.sessionToken
+    });
+    res.json({
+      success: true,
+      message: 'Administrator password updated successfully.'
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to update admin password.' });
+  }
+});
+
+// Admin Video Requests List & Stats
 app.get('/api/admin/requests', requireAdmin, (req, res) => {
   const requests = db.getAllRequests();
   const filter = (req.query.filter as string) || 'all';
 
   let filtered = requests;
-  if (filter === 'free_trial') {
-    filtered = requests.filter((r) => r.requestType === 'free_trial');
-  } else if (filter === 'paid') {
+  if (filter === 'paid') {
     filtered = requests.filter((r) => r.requestType === 'paid');
   } else if (filter === 'quoted') {
     filtered = requests.filter((r) => r.quote && r.quote.status === 'sent');
@@ -982,13 +1041,9 @@ app.get('/api/admin/requests', requireAdmin, (req, res) => {
 
   const stats = {
     total: requests.length,
-    freeTrial: requests.filter((r) => r.requestType === 'free_trial').length,
-    paid: requests.filter((r) => r.requestType === 'paid').length,
-    awaitingReview: requests.filter((r) => r.status === 'Submitted' || r.status === 'Under Review')
-      .length,
-    awaitingCustomerQuoteApproval: requests.filter(
-      (r) => r.quote && r.quote.status === 'sent'
-    ).length,
+    paid: requests.length,
+    awaitingReview: requests.filter((r) => r.status === 'Submitted' || r.status === 'Under Review').length,
+    awaitingCustomerQuoteApproval: requests.filter((r) => r.quote && r.quote.status === 'sent').length,
     inProduction: requests.filter((r) => r.status === 'In Production').length,
     completed: requests.filter((r) => r.status === 'Completed' || r.status === 'Delivered').length,
     failedEmails: db.getEmailLogs().filter((l) => l.status === 'failed').length
@@ -1001,43 +1056,18 @@ app.get('/api/admin/requests', requireAdmin, (req, res) => {
   });
 });
 
-// 12. Admin Users & Free Trial Management
+// Admin Customer Accounts List
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
   const users = db.getAllUsers();
+  const allRequests = db.getAllRequests();
+  const enriched = users.map((u) => ({
+    ...u,
+    requestCount: allRequests.filter((r) => r.userId === u.uid).length
+  }));
   res.json({
     success: true,
-    users
+    users: enriched
   });
-});
-
-app.post('/api/admin/users/:uid/trial-status', requireAdmin, (req, res) => {
-  try {
-    const { uid } = req.params;
-    const { newStatus, reason } = req.body;
-    const adminEmail = (req.headers['x-admin-email'] as string) || 'admin@aivideomaker.com';
-
-    if (!['eligible', 'reserved', 'used'].includes(newStatus)) {
-      return res.status(400).json({ error: 'Invalid trial status' });
-    }
-
-    const result = db.updateUserTrialStatus(
-      uid,
-      newStatus as TrialStatus,
-      adminEmail,
-      reason || 'Manual administrative review correction'
-    );
-    if (!result) {
-      return res.status(404).json({ error: 'User account not found' });
-    }
-
-    res.json({
-      success: true,
-      user: result.user,
-      audit: result.audit
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 app.get('/api/admin/audit-logs', requireAdmin, (_req, res) => {
@@ -1047,7 +1077,7 @@ app.get('/api/admin/audit-logs', requireAdmin, (_req, res) => {
   });
 });
 
-// 13. Admin Send Custom Quote to Customer
+// Admin Send Custom Quote to Customer
 app.post('/api/admin/requests/:id/quote', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1086,7 +1116,7 @@ app.post('/api/admin/requests/:id/quote', requireAdmin, async (req, res) => {
   }
 });
 
-// 14. Admin Record / Confirm Payment
+// Admin Record / Confirm Payment
 app.post('/api/admin/requests/:id/payment', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1119,7 +1149,7 @@ app.post('/api/admin/requests/:id/payment', requireAdmin, async (req, res) => {
   }
 });
 
-// 15. Admin Deliver Completed Video to Customer Email
+// Admin Deliver Completed Video to Customer Email
 const handleAdminDeliverVideo = async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
@@ -1173,7 +1203,7 @@ const handleAdminDeliverVideo = async (req: express.Request, res: express.Respon
 app.post('/api/admin/requests/:id/deliver-video', requireAdmin, handleAdminDeliverVideo);
 app.post('/api/admin/requests/:id/deliver', requireAdmin, handleAdminDeliverVideo);
 
-// 16. Admin Get Request by ID
+// Admin Get Request by ID
 app.get('/api/admin/requests/:id', requireAdmin, (req, res) => {
   const request = db.getRequestById(req.params.id);
   if (!request) return res.status(404).json({ error: 'Request not found' });
@@ -1229,7 +1259,7 @@ app.patch('/api/admin/requests/:id/status', requireAdmin, (req, res) => {
   res.json({ success: true, request: updated });
 });
 
-// 17. Admin Add Internal Note
+// Admin Add Internal Note
 app.post('/api/admin/requests/:id/notes', requireAdmin, (req, res) => {
   const { id } = req.params;
   const { note } = req.body;
@@ -1245,24 +1275,18 @@ app.post('/api/admin/requests/:id/notes', requireAdmin, (req, res) => {
   res.json({ success: true, request });
 });
 
-// 18. Admin Budget Requests endpoints
+// Admin Budget Requests endpoints
 app.get('/api/admin/budget-requests', requireAdmin, (req, res) => {
   const all = db.getAllBudgetRequests();
   const filter = (req.query.filter as string) || 'all';
 
   let filtered = all;
-  if (filter === 'free') {
-    filtered = all.filter((r) => r.isFree);
-  } else if (filter === 'paid') {
-    filtered = all.filter((r) => !r.isFree);
-  } else if (['Submitted', 'Under Review', 'Accepted', 'Declined', 'Completed'].includes(filter)) {
+  if (['Submitted', 'Under Review', 'Accepted', 'Declined', 'Completed'].includes(filter)) {
     filtered = all.filter((r) => r.status === filter);
   }
 
   const stats = {
     total: all.length,
-    free: all.filter((r) => r.isFree).length,
-    paid: all.filter((r) => !r.isFree).length,
     submitted: all.filter((r) => r.status === 'Submitted').length,
     underReview: all.filter((r) => r.status === 'Under Review').length,
     accepted: all.filter((r) => r.status === 'Accepted').length,
@@ -1282,7 +1306,7 @@ app.get('/api/admin/budget-requests/:id', requireAdmin, (req, res) => {
 });
 
 app.patch('/api/admin/budget-requests/:id', requireAdmin, (req, res) => {
-  const updated = db.updateBudgetRequest(req.params.id, req.body);
+  const updated = db.updateBudgetRequest(req.params.id, req.body as Partial<any>);
   if (!updated) return res.status(404).json({ error: 'Budget request not found.' });
   res.json({ success: true, budgetRequest: updated });
 });
@@ -1300,12 +1324,11 @@ app.post('/api/admin/budget-requests/:id/reply', requireAdmin, async (req, res) 
   res.json({ success: true, budgetRequest: updated });
 });
 
-// 19. Admin Email Logs & Settings
+// Admin Email Logs & Settings
 app.get('/api/admin/email-logs', requireAdmin, (_req, res) => {
   res.json({ success: true, emailLogs: db.getEmailLogs() });
 });
 
-// Test Gmail Connection Endpoint
 app.post('/api/admin/email/test-connection', requireAdmin, async (req, res) => {
   try {
     const { recipientEmail } = req.body;
@@ -1319,7 +1342,6 @@ app.post('/api/admin/email/test-connection', requireAdmin, async (req, res) => {
   }
 });
 
-// Retry Email Endpoint
 app.post('/api/admin/email/:id/retry', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1330,7 +1352,6 @@ app.post('/api/admin/email/:id/retry', requireAdmin, async (req, res) => {
   }
 });
 
-// Resend Owner Notification for specific Request
 app.post('/api/admin/requests/:id/resend-owner-email', requireAdmin, async (req, res) => {
   try {
     const request = db.getRequestById(req.params.id);
@@ -1345,10 +1366,6 @@ app.post('/api/admin/requests/:id/resend-owner-email', requireAdmin, async (req,
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
-});
-
-app.get('/api/admin/devices', requireAdmin, (_req, res) => {
-  res.json({ success: true, devices: db.getAllDevices() });
 });
 
 function getSanitizedSettingsForClient() {
@@ -1387,7 +1404,7 @@ app.post('/api/admin/reset-all', requireAdmin, (_req, res) => {
   db.resetAllData();
   res.json({
     success: true,
-    message: 'All accounts, sessions, devices, and requests have been reset.'
+    message: 'All customer accounts, sessions, and requests have been reset.'
   });
 });
 
@@ -1420,7 +1437,11 @@ async function startServer() {
     });
     app.use(vite.middlewares);
     app.use('*', async (req, res, next) => {
-      if (req.originalUrl.startsWith('/api/') || req.originalUrl.startsWith('/uploads/')) {
+      if (
+        req.originalUrl.startsWith('/api/') ||
+        req.originalUrl.startsWith('/uploads/') ||
+        req.originalUrl.startsWith('/downloads/')
+      ) {
         return next();
       }
       try {
@@ -1437,7 +1458,11 @@ async function startServer() {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      if (req.originalUrl.startsWith('/api/') || req.originalUrl.startsWith('/uploads/')) {
+      if (
+        req.originalUrl.startsWith('/api/') ||
+        req.originalUrl.startsWith('/uploads/') ||
+        req.originalUrl.startsWith('/downloads/')
+      ) {
         return res.status(404).json({ success: false, error: 'Endpoint not found' });
       }
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1445,7 +1470,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`AI Video Maker running on http://localhost:${PORT}`);
+    console.log(`AI TIMES — AI Video Maker running on http://localhost:${PORT}`);
   });
 }
 

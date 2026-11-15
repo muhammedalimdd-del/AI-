@@ -1,0 +1,46 @@
+appId: com.aitimes.aivideomaker
+productName: AI Video Maker
+copyright: Copyright © 2026 AI TIMES
+directories:
+  output: releases
+  buildResources: build
+files:
+  - dist/**/*
+  - electron/**/*
+  - build/**/*
+  - package.json
+  - "!downloads/**"
+  - "!releases/**"
+  - "!data/**"
+  - "!uploads/**"
+  - "!node_modules/**"
+  - node_modules/electron-updater/**/*
+  - node_modules/builder-util-runtime/**/*
+  - node_modules/fs-extra/**/*
+  - node_modules/graceful-fs/**/*
+  - node_modules/jsonfile/**/*
+  - node_modules/universalify/**/*
+  - node_modules/js-yaml/**/*
+  - node_modules/argparse/**/*
+  - node_modules/lazy-val/**/*
+  - node_modules/lodash.escaperegexp/**/*
+  - node_modules/lodash.isequal/**/*
+  - node_modules/semver/**/*
+  - node_modules/tiny-typed-emitter/**/*
+  - node_modules/debug/**/*
+  - node_modules/ms/**/*
+  - node_modules/sax/**/*
+extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+asar: true
+win:
+  target:
+    - target: dir
+      arch:
+        - x64
+  icon: build/icon.ico
+  signExecutable: false
+publish:
+  provider: generic
+  url: https://ais-pre-eval4556daji7ihjgwnfzr-589743996180.asia-northeast1.run.app/downloads

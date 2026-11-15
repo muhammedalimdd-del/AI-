@@ -5,11 +5,8 @@ import {
   Check,
   Clock,
   ArrowRight,
-  Gift,
   CreditCard,
-  Mail,
-  ShieldCheck,
-  Film
+  Mail
 } from 'lucide-react';
 
 interface SuccessScreenProps {
@@ -18,7 +15,7 @@ interface SuccessScreenProps {
     accessToken: string;
     title: string;
     status: string;
-    requestType?: 'free_trial' | 'paid';
+    requestType?: 'paid';
     pricingMessage?: string;
     customerName: string;
     customerEmail: string;
@@ -49,7 +46,6 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
   onNewRequest
 }) => {
   const [copied, setCopied] = useState(false);
-  const isTrial = request.requestType === 'free_trial';
 
   const copyId = () => {
     navigator.clipboard.writeText(request.id);
@@ -61,41 +57,21 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
     <div className="max-w-3xl mx-auto px-4 py-16 animate-fadeIn">
       <div className="rounded-3xl bg-[#090D16] border border-slate-800 shadow-2xl p-8 sm:p-12 text-center relative overflow-hidden">
         {/* Ambient Top Glow */}
-        <div
-          className={`absolute top-0 left-1/2 -translate-x-1/2 w-96 h-40 rounded-full blur-[90px] pointer-events-none ${
-            isTrial ? 'bg-emerald-500/15' : 'bg-indigo-500/15'
-          }`}
-        />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-40 rounded-full blur-[90px] pointer-events-none bg-indigo-500/15" />
 
         {/* Success Icon */}
-        <div
-          className={`w-20 h-20 rounded-2xl p-[2px] mx-auto mb-6 shadow-xl ${
-            isTrial
-              ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 shadow-emerald-500/25'
-              : 'bg-gradient-to-tr from-indigo-600 to-purple-500 shadow-indigo-500/25'
-          }`}
-        >
+        <div className="w-20 h-20 rounded-2xl p-[2px] mx-auto mb-6 shadow-xl bg-gradient-to-tr from-indigo-600 to-purple-500 shadow-indigo-500/25">
           <div className="w-full h-full bg-[#060911] rounded-[14px] flex items-center justify-center">
-            {isTrial ? (
-              <Gift className="w-10 h-10 text-emerald-400" />
-            ) : (
-              <CheckCircle2 className="w-10 h-10 text-indigo-400" />
-            )}
+            <CheckCircle2 className="w-10 h-10 text-indigo-400" />
           </div>
         </div>
 
-        {/* Exact Headline as Specified */}
         <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight mb-3">
-          {isTrial
-            ? 'Your Free Trial Request Has Been Submitted!'
-            : 'Your Video Request Has Been Submitted!'}
+          Your Video Request Has Been Submitted!
         </h2>
 
-        {/* Exact Supporting Text as Specified */}
         <p className="text-sm sm:text-base text-slate-300 max-w-xl mx-auto leading-relaxed mb-8">
-          {isTrial
-            ? 'Thank you for sharing your idea. We have received your request and will review it. Your completed video will be delivered to your registered email address when production is completed.'
-            : 'The payment will be based on the video. We will review your requirements and contact you with the proposed price before starting paid production.'}
+          The payment will be based on the video. We will review your requirements and contact you with a custom quote before starting production.
         </p>
 
         {/* Request ID Badge with Copy */}
@@ -123,7 +99,7 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
         <div className="rounded-2xl bg-[#0C1220] border border-slate-800/90 p-6 text-left mb-8 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-2">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Request Details & Status
+              Request Details &amp; Status
             </span>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-950/80 border border-blue-800 text-blue-300 text-xs font-semibold">
               <Clock className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
@@ -138,17 +114,13 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
             </div>
             <div>
               <span className="text-slate-400 block mb-0.5">Request Type:</span>
-              <span
-                className={`font-semibold inline-flex items-center gap-1.5 ${
-                  isTrial ? 'text-emerald-400' : 'text-indigo-300'
-                }`}
-              >
-                {isTrial ? <Gift className="w-3.5 h-3.5" /> : <CreditCard className="w-3.5 h-3.5" />}
-                {isTrial ? 'One-Time Free Trial' : 'Paid Video Request'}
+              <span className="font-semibold inline-flex items-center gap-1.5 text-amber-300">
+                <CreditCard className="w-3.5 h-3.5" />
+                Paid Video Request
               </span>
             </div>
             <div>
-              <span className="text-slate-400 block mb-0.5">Registered Delivery Email:</span>
+              <span className="text-slate-400 block mb-0.5">Delivery Email Address:</span>
               <span className="text-indigo-300 font-mono text-sm">{request.customerEmail}</span>
             </div>
             <div>
@@ -157,8 +129,8 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
             </div>
             <div className="sm:col-span-2">
               <span className="text-slate-400 block mb-0.5">Pricing Note:</span>
-              <span className="text-slate-200">
-                {request.pricingMessage || (isTrial ? 'One-Time Free Trial' : 'The payment will be based on the video.')}
+              <span className="text-amber-300 font-semibold">
+                The payment will be based on the video.
               </span>
             </div>
           </div>
@@ -197,7 +169,7 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
                 `Customer Email: ${request.customerEmail}`,
                 `Request ID: ${request.id}`,
                 `Video Title: ${request.title}`,
-                `Request Type: ${isTrial ? 'One-Time Free Trial' : 'Paid Video Request'}`,
+                'Request Type: Paid Video Request — The payment will be based on the video.',
                 `Style: ${request.style || 'Cinematic'}`,
                 `Format: ${request.format || 'Landscape'} (${request.aspectRatio || '16:9'})`,
                 `Duration: ${request.duration || 'Standard'}`,

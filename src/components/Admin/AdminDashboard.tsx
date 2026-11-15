@@ -2,68 +2,72 @@ import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Lock,
-  Search,
-  Filter,
   RefreshCw,
-  Eye,
-  Trash2,
   Send,
   Upload,
-  CheckCircle,
-  AlertTriangle,
-  Clock,
   Video,
   Mail,
-  ChevronRight,
   ExternalLink,
   X,
-  Plus,
   Sparkles,
   AlertCircle,
-  DollarSign,
-  Gift,
   CreditCard,
   UserCheck,
-  Check,
-  Download,
   RotateCcw,
   Key,
   CheckCircle2,
-  Database
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { VideoStatus } from '../../types/client.ts';
-import {
-  seedInitialFirestoreData,
-  getAllVideoRequestsFromFirestore,
-  getAllBudgetRequestsFromFirestore,
-  getAllUsersFromFirestore,
-  saveVideoRequestToFirestore
-} from '../../services/firestoreService.ts';
 import { safeFetchJson, safeResponseJson } from '../../services/apiClient.ts';
 
 interface AdminDashboardProps {
   onClose: () => void;
 }
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [adminToken, setAdminToken] = useState<string>(() => localStorage.getItem('studio_admin_token') || '');
+const ADMIN_TOKEN_KEY = 'studio_admin_token';
 
-  // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'requests' | 'users' | 'budget' | 'emails' | 'settings' | 'firestore'>('requests');
-  const [isSeedingFirestore, setIsSeedingFirestore] = useState(false);
-  const [firestoreStatusMessage, setFirestoreStatusMessage] = useState<string | null>(null);
-  const [firestoreRequests, setFirestoreRequests] = useState<any[]>([]);
-  const [firestoreUsers, setFirestoreUsers] = useState<any[]>([]);
-  const [firestoreBudgets, setFirestoreBudgets] = useState<any[]>([]);
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
+  const [adminToken, setAdminToken] = useState<string>(() => {
+    try {
+      return localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [isInitialized, setIsInitialized] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+
+  // Admin Login / One-Time Bootstrap State (zero hardcoded passwords)
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Navigation tabs (removed Free Trials & Firebase Database tabs)
+  const [activeTab, setActiveTab] = useState<'requests' | 'users' | 'budget' | 'emails' | 'settings'>('requests');
+
+  // Inline notification banner (replaces browser alert dialogs)
+  const [dashboardNotice, setDashboardNotice] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
+  const showNotice = (type: 'success' | 'error', text: string) => {
+    setDashboardNotice({ type, text });
+    setTimeout(() => {
+      setDashboardNotice((prev) => (prev?.text === text ? null : prev));
+    }, 6000);
+  };
 
   // Video Requests state
   const [requests, setRequests] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({
     total: 0,
-    freeTrial: 0,
     paid: 0,
     awaitingReview: 0,
     awaitingCustomerQuoteApproval: 0,
@@ -71,7 +75,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     completed: 0,
     failedEmails: 0
   });
-  const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -87,40 +90,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [videoDeliveryUrl, setVideoDeliveryUrl] = useState('');
   const [uploadedVideoFilename, setUploadedVideoFilename] = useState('');
   const [uploadedVideoSize, setUploadedVideoSize] = useState<number | undefined>(undefined);
-  const [deliveryMessage, setDeliveryMessage] = useState('Your AI video has been produced and quality checked.');
+  const [deliveryMessage, setDeliveryMessage] = useState(
+    'Your AI video has been produced and quality checked.'
+  );
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [isSendingVideo, setIsSendingVideo] = useState(false);
 
-  // Custom Quote Fields
+  // Custom Quote & Payment Fields
   const [quoteAmount, setQuoteAmount] = useState<number>(1500);
   const [quoteCurrency, setQuoteCurrency] = useState<string>('₹');
-  const [quoteBreakdown, setQuoteBreakdown] = useState<string>('Comprehensive scene generation, character likeness consistency, and professional audio/color grading');
+  const [quoteBreakdown, setQuoteBreakdown] = useState<string>(
+    'Comprehensive scene generation, character likeness consistency, and professional audio/color grading'
+  );
   const [quoteValidUntil, setQuoteValidUntil] = useState<string>('');
   const [quotePaymentLink, setQuotePaymentLink] = useState<string>('');
+  const [transactionRefInput, setTransactionRefInput] = useState<string>('');
   const [isSendingQuote, setIsSendingQuote] = useState<boolean>(false);
 
-  // User Accounts & Audit logs state
+  // Customer Accounts & Audit logs state
   const [users, setUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [userSearch, setUserSearch] = useState('');
 
   // Idea & Budget Requests state
   const [budgetRequests, setBudgetRequests] = useState<any[]>([]);
-  const [budgetStats, setBudgetStats] = useState<any>({
-    total: 0,
-    free: 0,
-    paid: 0,
-    submitted: 0,
-    underReview: 0,
-    accepted: 0,
-    declined: 0,
-    completed: 0
-  });
-  const [budgetFilter, setBudgetFilter] = useState('all');
-  const [budgetSearch, setBudgetSearch] = useState('');
   const [selectedBudgetRequest, setSelectedBudgetRequest] = useState<any | null>(null);
-  const [budgetStatusToSet, setBudgetStatusToSet] = useState<string>('Under Review');
-  const [budgetInternalNote, setBudgetInternalNote] = useState('');
   const [budgetReplyMessage, setBudgetReplyMessage] = useState('');
   const [isSendingBudgetReply, setIsSendingBudgetReply] = useState(false);
 
@@ -154,90 +148,197 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
-  // Auto-login if token stored
-  useEffect(() => {
-    if (adminToken) {
-      verifyToken(adminToken);
-    }
-  }, [adminToken]);
+  // Change Admin Password Form State
+  const [currentAdminPw, setCurrentAdminPw] = useState('');
+  const [newAdminPw, setNewAdminPw] = useState('');
+  const [confirmNewAdminPw, setConfirmNewAdminPw] = useState('');
+  const [isChangingPw, setIsChangingPw] = useState(false);
+  const [changePwNotice, setChangePwNotice] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
-  const verifyToken = async (token: string) => {
-    try {
-      const res = await fetch('/api/admin/requests', {
-        headers: { 'x-admin-key': token }
-      });
-      if (res.ok) {
-        setIsAuthenticated(true);
-        loadData(token);
-      } else {
-        localStorage.removeItem('studio_admin_token');
+  const getAdminHeaders = (token = adminToken, extra?: Record<string, string>) => ({
+    ...(extra || {}),
+    Authorization: `Bearer ${token}`,
+    'x-session-token': token
+  });
+
+  // On mount: validate stored token via /api/admin/session or check /api/admin/bootstrap-status
+  useEffect(() => {
+    let active = true;
+    const initAdminAuth = async () => {
+      setIsCheckingAuth(true);
+      try {
+        if (adminToken) {
+          const sessionRes = await safeFetchJson<{ success?: boolean; user?: any }>(
+            '/api/admin/session',
+            { headers: getAdminHeaders(adminToken) }
+          );
+          if (!active) return;
+          if (sessionRes.ok && sessionRes.data?.user?.role === 'admin') {
+            setIsAuthenticated(true);
+            setIsInitialized(true);
+            setIsCheckingAuth(false);
+            loadData(adminToken);
+            return;
+          }
+          try {
+            localStorage.removeItem(ADMIN_TOKEN_KEY);
+          } catch {}
+          setAdminToken('');
+        }
+
+        const statusRes = await safeFetchJson<{ initialized?: boolean }>('/api/admin/bootstrap-status');
+        if (!active) return;
+        setIsInitialized(statusRes.data?.initialized !== false);
         setIsAuthenticated(false);
+      } catch {
+        if (active) setIsAuthenticated(false);
+      } finally {
+        if (active) setIsCheckingAuth(false);
       }
-    } catch (e) {
-      setIsAuthenticated(false);
-    }
-  };
+    };
+    initAdminAuth();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoggingIn) return;
     setLoginError(null);
 
+    if (!usernameInput.trim() || !passwordInput) {
+      setLoginError('Please enter your admin username and password.');
+      return;
+    }
+
+    setIsLoggingIn(true);
     try {
-      let loggedIn = false;
-      let token = '';
+      const res = await safeFetchJson<{
+        success?: boolean;
+        token?: string;
+        user?: any;
+        error?: string;
+      }>('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: usernameInput.trim(),
+          password: passwordInput
+        })
+      });
 
-      try {
-        const res = await fetch('/api/admin/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: passwordInput })
-        });
-        const parsed = await safeResponseJson<any>(res);
-        if (parsed.ok && parsed.data?.token) {
-          token = parsed.data.token;
-          loggedIn = true;
-        } else if (parsed.data?.error) {
-          throw new Error(parsed.data.error);
-        }
-      } catch (err: any) {
-        if (err.message && err.message.includes('Invalid credentials')) {
-          throw err;
-        }
+      if (!res.ok || !res.data?.token) {
+        throw new Error(res.data?.error || res.error || 'Incorrect admin username or password.');
       }
 
-      if (!loggedIn) {
-        // Fallback for static hosting (GitHub Pages)
-        if (passwordInput === 'videomaker2026' || passwordInput === 'admin2026' || passwordInput === 'admin') {
-          token = 'static_admin_token_2026';
-          loggedIn = true;
-        } else {
-          throw new Error('Invalid credentials. (Hint: default password is videomaker2026)');
-        }
-      }
-
+      const token = res.data.token;
       setAdminToken(token);
-      localStorage.setItem('studio_admin_token', token);
+      try {
+        localStorage.setItem(ADMIN_TOKEN_KEY, token);
+      } catch {}
       setIsAuthenticated(true);
+      setPasswordInput('');
       loadData(token);
     } catch (err: any) {
-      setLoginError(err.message || 'Login failed');
+      setLoginError(err.message || 'Incorrect admin username or password.');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
-  const loadData = async (token = adminToken) => {
+  const handleInitialSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isLoggingIn) return;
+    setLoginError(null);
+
+    if (!passwordInput || passwordInput.length < 8) {
+      setLoginError('Please create an admin password of at least 8 characters.');
+      return;
+    }
+    if (passwordInput !== confirmPasswordInput) {
+      setLoginError('Passwords do not match.');
+      return;
+    }
+
+    setIsLoggingIn(true);
+    try {
+      const res = await safeFetchJson<{
+        success?: boolean;
+        token?: string;
+        user?: any;
+        error?: string;
+      }>('/api/admin/setup-initial-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: passwordInput,
+          confirmPassword: confirmPasswordInput
+        })
+      });
+
+      if (!res.ok || !res.data?.token) {
+        throw new Error(res.data?.error || res.error || 'Failed to initialize admin password.');
+      }
+
+      const token = res.data.token;
+      setAdminToken(token);
+      try {
+        localStorage.setItem(ADMIN_TOKEN_KEY, token);
+      } catch {}
+      setIsInitialized(true);
+      setIsAuthenticated(true);
+      setPasswordInput('');
+      setConfirmPasswordInput('');
+      loadData(token);
+    } catch (err: any) {
+      setLoginError(err.message || 'Failed to initialize admin password.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleAdminLogout = async () => {
+    if (adminToken) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: getAdminHeaders(adminToken)
+        });
+      } catch {}
+    }
+    try {
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    } catch {}
+    setAdminToken('');
+    setIsAuthenticated(false);
+    setSelectedRequest(null);
+    setSelectedBudgetRequest(null);
+  };
+
+  const loadData = async (token = adminToken, filterOverride?: string) => {
+    if (!token) return;
     setIsLoading(true);
-    let loadedRequests = false;
-    let loadedBudget = false;
+    const activeFilter = filterOverride !== undefined ? filterOverride : statusFilter;
 
     try {
+      const headers = getAdminHeaders(token);
       const [reqRes, bgtRes, emlRes, setRes, usrRes, audRes] = await Promise.all([
-        fetch(`/api/admin/requests?filter=${statusFilter}`, { headers: { 'x-admin-key': token } }),
-        fetch(`/api/admin/budget-requests?filter=${budgetFilter}`, { headers: { 'x-admin-key': token } }),
-        fetch('/api/admin/email-logs', { headers: { 'x-admin-key': token } }),
-        fetch('/api/admin/settings', { headers: { 'x-admin-key': token } }),
-        fetch('/api/admin/users', { headers: { 'x-admin-key': token } }),
-        fetch('/api/admin/audit-logs', { headers: { 'x-admin-key': token } })
+        fetch(`/api/admin/requests?filter=${encodeURIComponent(activeFilter)}`, { headers }),
+        fetch('/api/admin/budget-requests?filter=all', { headers }),
+        fetch('/api/admin/email-logs', { headers }),
+        fetch('/api/admin/settings', { headers }),
+        fetch('/api/admin/users', { headers }),
+        fetch('/api/admin/audit-logs', { headers })
       ]);
+
+      if (reqRes.status === 401 || reqRes.status === 403) {
+        handleAdminLogout();
+        return;
+      }
 
       const [parsedReq, parsedBgt, parsedEml, parsedSet, parsedUsr, parsedAud] = await Promise.all([
         safeResponseJson<any>(reqRes),
@@ -251,12 +352,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       if (parsedReq.ok && parsedReq.data) {
         setRequests(parsedReq.data.requests || []);
         if (parsedReq.data.stats) setStats(parsedReq.data.stats);
-        loadedRequests = true;
       }
       if (parsedBgt.ok && parsedBgt.data) {
         setBudgetRequests(parsedBgt.data.budgetRequests || []);
-        if (parsedBgt.data.stats) setBudgetStats(parsedBgt.data.stats);
-        loadedBudget = true;
       }
       if (parsedEml.ok && parsedEml.data) {
         setEmailLogs(parsedEml.data.emailLogs || []);
@@ -271,7 +369,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           setSettingsSmtpHost(st.settings.smtpHost || 'smtp.gmail.com');
           setSettingsSmtpPort(st.settings.smtpPort || 465);
           setSettingsSmtpSecure(st.settings.smtpSecure !== undefined ? st.settings.smtpSecure : true);
-          setSettingsSmtpUser(st.settings.smtpUser || st.settings.ownerNotificationEmail || 'muhammedalimdd@gmail.com');
+          setSettingsSmtpUser(
+            st.settings.smtpUser || st.settings.ownerNotificationEmail || 'muhammedalimdd@gmail.com'
+          );
           setSettingsSmtpPass(st.settings.smtpPass || '');
           setSettingsApiKey(st.settings.apiKey || '');
         }
@@ -282,82 +382,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       if (parsedAud.ok && parsedAud.data) {
         setAuditLogs(parsedAud.data.auditLogs || []);
       }
-    } catch (e) {
-      console.warn('Backend unavailable, checking local storage data', e);
-    }
-
-    // Static fallback: load from localStorage if backend was unavailable
-    if (!loadedRequests) {
-      try {
-        const localReqs = JSON.parse(localStorage.getItem('zenvora_local_requests') || '[]');
-        setRequests(localReqs);
-        setStats({
-          total: localReqs.length,
-          freeTrial: localReqs.filter((r: any) => r.requestType === 'free_trial').length,
-          paid: localReqs.filter((r: any) => r.requestType === 'paid').length,
-          awaitingReview: localReqs.filter((r: any) => r.status === 'pending_review').length,
-          awaitingCustomerQuoteApproval: 0,
-          inProduction: 0,
-          completed: 0,
-          failedEmails: 0
-        });
-      } catch (e) {}
-    }
-
-    if (!loadedBudget) {
-      try {
-        const localBgt = JSON.parse(localStorage.getItem('zenvora_budget_requests') || '[]');
-        setBudgetRequests(localBgt);
-        setBudgetStats({
-          total: localBgt.length,
-          free: localBgt.filter((b: any) => b.isFree).length,
-          paid: localBgt.filter((b: any) => !b.isFree).length,
-          submitted: localBgt.length,
-          underReview: localBgt.length,
-          accepted: 0,
-          declined: 0,
-          completed: 0
-        });
-      } catch (e) {}
-    }
-
-    // Query live Firebase Firestore
-    try {
-      const fsReqs = await getAllVideoRequestsFromFirestore();
-      if (fsReqs) {
-        setFirestoreRequests(fsReqs);
-        if (fsReqs.length > 0) {
-          setRequests(prev => {
-            const existingIds = new Set(prev.map(p => p.id));
-            const newFromFs = fsReqs.filter(f => !existingIds.has(f.id));
-            return [...prev, ...newFromFs];
-          });
-        }
-      }
-      const fsUsrs = await getAllUsersFromFirestore();
-      if (fsUsrs) setFirestoreUsers(fsUsrs);
-      const fsBgts = await getAllBudgetRequestsFromFirestore();
-      if (fsBgts) setFirestoreBudgets(fsBgts);
-    } catch (fsErr) {
-      console.warn('Notice: Firestore data fetch:', fsErr);
-    }
-
-    setIsLoading(false);
-  };
-
-  const handleSeedFirestore = async () => {
-    setIsSeedingFirestore(true);
-    setFirestoreStatusMessage('Connecting to Firebase Firestore and populating initial records...');
-    try {
-      const res = await seedInitialFirestoreData();
-      setFirestoreStatusMessage(res.message);
-      alert(res.message);
-      await loadData();
     } catch (e: any) {
-      setFirestoreStatusMessage(`Notice: ${e.message}`);
-      alert(`Firestore notice: ${e.message}`);
+      showNotice('error', e.message || 'Failed to load studio data.');
     } finally {
-      setIsSeedingFirestore(false);
+      setIsLoading(false);
     }
   };
 
@@ -366,7 +394,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     setDrawerLoading(true);
     try {
       const result = await safeFetchJson<{ request?: any }>(`/api/admin/requests/${reqId}`, {
-        headers: { 'x-admin-key': adminToken }
+        headers: getAdminHeaders()
       });
       if (result.ok && result.data?.request) {
         const req = result.data.request;
@@ -375,6 +403,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         setEstDateToSet(req.estimatedCompletionDate || '');
         setCustomerNotesToSet(req.customerVisibleNotes || '');
         setVideoDeliveryUrl(req.completedVideo?.directLink || '');
+        setTransactionRefInput('TXN-' + Date.now().toString().slice(-6));
         if (req.quote?.amount) {
           setQuoteAmount(req.quote.amount);
           setQuoteCurrency(req.quote.currency || '₹');
@@ -382,8 +411,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           setQuotePaymentLink(req.quote.paymentLink || '');
         }
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      showNotice('error', e.message || 'Unable to open request.');
     } finally {
       setDrawerLoading(false);
     }
@@ -392,29 +421,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const handleUpdateRequest = async () => {
     if (!selectedRequest) return;
     try {
-      const result = await safeFetchJson<{ request?: any; error?: string }>(`/api/admin/requests/${selectedRequest.id}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
-        body: JSON.stringify({
-          status: statusToSet,
-          estimatedCompletionDate: estDateToSet,
-          customerVisibleNotes: customerNotesToSet,
-          internalNote: newInternalNote ? newInternalNote.trim() : undefined
-        })
-      });
+      const result = await safeFetchJson<{ request?: any; error?: string }>(
+        `/api/admin/requests/${selectedRequest.id}`,
+        {
+          method: 'PATCH',
+          headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            status: statusToSet,
+            estimatedCompletionDate: estDateToSet,
+            customerVisibleNotes: customerNotesToSet,
+            internalNote: newInternalNote ? newInternalNote.trim() : undefined
+          })
+        }
+      );
       if (result.ok && result.data?.request) {
         setSelectedRequest(result.data.request);
         setNewInternalNote('');
         loadData();
-        alert('Request updated successfully.');
+        showNotice('success', `Request ${selectedRequest.id} updated successfully.`);
       } else {
-        alert(result.data?.error || result.error || 'Update failed');
+        showNotice('error', result.data?.error || result.error || 'Update failed.');
       }
     } catch (e: any) {
-      alert(e.message);
+      showNotice('error', e.message);
     }
   };
 
@@ -423,29 +452,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     if (!selectedRequest || !quoteAmount) return;
     setIsSendingQuote(true);
     try {
-      const result = await safeFetchJson<{ request?: any; error?: string }>(`/api/admin/requests/${selectedRequest.id}/quote`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
-        body: JSON.stringify({
-          amount: Number(quoteAmount),
-          currency: quoteCurrency,
-          breakdown: quoteBreakdown,
-          validUntil: quoteValidUntil,
-          paymentLink: quotePaymentLink
-        })
-      });
+      const result = await safeFetchJson<{ request?: any; error?: string }>(
+        `/api/admin/requests/${selectedRequest.id}/quote`,
+        {
+          method: 'POST',
+          headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            amount: Number(quoteAmount),
+            currency: quoteCurrency,
+            breakdown: quoteBreakdown,
+            validUntil: quoteValidUntil,
+            paymentLink: quotePaymentLink
+          })
+        }
+      );
       if (result.ok && result.data?.request) {
         setSelectedRequest(result.data.request);
-        alert(`Custom quote of ${quoteCurrency}${quoteAmount} dispatched to customer email!`);
+        showNotice(
+          'success',
+          `Custom quote of ${quoteCurrency}${quoteAmount} dispatched to ${selectedRequest.customerEmail}!`
+        );
         loadData();
       } else {
-        alert(result.data?.error || result.error || 'Failed to send quote');
+        showNotice('error', result.data?.error || result.error || 'Failed to send quote.');
       }
     } catch (e: any) {
-      alert(e.message);
+      showNotice('error', e.message);
     } finally {
       setIsSendingQuote(false);
     }
@@ -454,26 +486,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   // Payment Workflow
   const handleConfirmPayment = async () => {
     if (!selectedRequest) return;
-    const ref = prompt('Enter transaction reference / payment confirmation ID:', 'TXN-' + Date.now().toString().slice(-6));
+    const ref = transactionRefInput.trim() || 'TXN-' + Date.now().toString().slice(-6);
     try {
-      const result = await safeFetchJson<{ request?: any; error?: string }>(`/api/admin/requests/${selectedRequest.id}/payment`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
-        body: JSON.stringify({
-          status: 'verified',
-          transactionRef: ref || 'Verified in Admin'
-        })
-      });
+      const result = await safeFetchJson<{ request?: any; error?: string }>(
+        `/api/admin/requests/${selectedRequest.id}/payment`,
+        {
+          method: 'POST',
+          headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            status: 'verified',
+            transactionRef: ref
+          })
+        }
+      );
       if (result.ok && result.data?.request) {
         setSelectedRequest(result.data.request);
-        alert('Payment verified! Production officially begun and customer notified.');
+        showNotice('success', 'Payment verified! Production officially begun and customer notified.');
         loadData();
+      } else {
+        showNotice('error', result.data?.error || result.error || 'Payment confirmation failed.');
       }
     } catch (e: any) {
-      alert(e.message);
+      showNotice('error', e.message);
     }
   };
 
@@ -487,6 +521,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       formData.append('file', file);
       const res = await fetch('/api/upload', {
         method: 'POST',
+        headers: getAdminHeaders(),
         body: formData
       });
       const parsed = await safeResponseJson<{
@@ -501,15 +536,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       if (parsed.ok && parsed.data?.fileUrl) {
         const fullUrl = parsed.data.fileUrl.startsWith('http')
           ? parsed.data.fileUrl
-          : `${window.location.origin}${parsed.data.fileUrl}`;
+          : window.location.protocol === 'http:' || window.location.protocol === 'https:'
+          ? `${window.location.origin}${parsed.data.fileUrl}`
+          : parsed.data.fileUrl;
         setVideoDeliveryUrl(fullUrl);
         setUploadedVideoFilename(parsed.data.originalName || parsed.data.filename || file.name);
         setUploadedVideoSize(parsed.data.size || file.size);
+        showNotice('success', `Video "${file.name}" uploaded successfully.`);
       } else {
-        alert(parsed.data?.error || parsed.error || 'Failed to upload video file.');
+        showNotice('error', parsed.data?.error || parsed.error || 'Failed to upload video file.');
       }
     } catch (err: any) {
-      alert(err.message || 'Error uploading video file.');
+      showNotice('error', err.message || 'Error uploading video file.');
     } finally {
       setIsUploadingVideo(false);
     }
@@ -518,7 +556,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   // Video Delivery Workflow ("Send Video to Customer")
   const handleDeliverVideo = async () => {
     if (!selectedRequest || !videoDeliveryUrl.trim()) {
-      alert('Please upload a completed video file or enter a valid video download link.');
+      showNotice('error', 'Please upload a completed video file or enter a valid video download link.');
       return;
     }
     setIsSendingVideo(true);
@@ -529,10 +567,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         error?: string;
       }>(`/api/admin/requests/${selectedRequest.id}/deliver-video`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
+        headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           directLink: videoDeliveryUrl.trim(),
           downloadUrl: videoDeliveryUrl.trim(),
@@ -545,56 +580,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         const updatedReq = result.data.request;
         setSelectedRequest(updatedReq);
         setStatusToSet(updatedReq.status);
-        try {
-          await saveVideoRequestToFirestore(updatedReq);
-        } catch {
-          // ignore background sync notice
-        }
         loadData();
         if (result.data.emailResult?.success) {
-          alert(`Completed video sent to ${updatedReq.customerEmail} and request marked as Delivered!`);
+          showNotice(
+            'success',
+            `Completed video sent to ${updatedReq.customerEmail} and request marked as Delivered!`
+          );
         } else {
-          alert(
-            `Request marked as Delivered and download link saved! Note: Email transmission was logged as failed (${
-              result.data.emailResult?.error || 'SMTP/API credentials not configured'
-            }) — you can retry sending from Email Logs.`
+          showNotice(
+            'error',
+            `Request marked as Delivered and link saved, but email delivery failed (${
+              result.data.emailResult?.error || 'Check email settings'
+            }).`
           );
         }
       } else {
-        alert(result.data?.error || result.error || 'Delivery failed');
+        showNotice('error', result.data?.error || result.error || 'Delivery failed.');
       }
     } catch (e: any) {
-      alert(e.message);
+      showNotice('error', e.message);
     } finally {
       setIsSendingVideo(false);
-    }
-  };
-
-  // User Trial Reset Workflow
-  const handleResetTrial = async (uid: string, userEmail: string) => {
-    const reason = prompt(`Reset 1-time free trial for ${userEmail}? Enter reason for audit log:`, 'Complimentary trial granted by studio director');
-    if (!reason) return;
-
-    try {
-      const result = await safeFetchJson<{ error?: string }>(`/api/admin/users/${uid}/trial-status`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
-        body: JSON.stringify({
-          newStatus: 'eligible',
-          reason
-        })
-      });
-      if (result.ok) {
-        alert(`Trial status for ${userEmail} reset to eligible.`);
-        loadData();
-      } else {
-        alert(result.data?.error || result.error || 'Failed to update trial status.');
-      }
-    } catch (e: any) {
-      alert(e.message);
     }
   };
 
@@ -602,14 +608,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const openBudgetDrawer = async (id: string) => {
     try {
       const result = await safeFetchJson<{ budgetRequest?: any }>(`/api/admin/budget-requests/${id}`, {
-        headers: { 'x-admin-key': adminToken }
+        headers: getAdminHeaders()
       });
       if (result.ok && result.data?.budgetRequest) {
         setSelectedBudgetRequest(result.data.budgetRequest);
-        setBudgetStatusToSet(result.data.budgetRequest.status);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      showNotice('error', e.message || 'Unable to load inquiry.');
     }
   };
 
@@ -617,24 +622,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     if (!selectedBudgetRequest || !budgetReplyMessage.trim()) return;
     setIsSendingBudgetReply(true);
     try {
-      const result = await safeFetchJson<{ budgetRequest?: any; error?: string }>(`/api/admin/budget-requests/${selectedBudgetRequest.id}/reply`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
-        body: JSON.stringify({ message: budgetReplyMessage.trim() })
-      });
+      const result = await safeFetchJson<{ budgetRequest?: any; error?: string }>(
+        `/api/admin/budget-requests/${selectedBudgetRequest.id}/reply`,
+        {
+          method: 'POST',
+          headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ message: budgetReplyMessage.trim() })
+        }
+      );
       if (result.ok && result.data?.budgetRequest) {
         setSelectedBudgetRequest(result.data.budgetRequest);
         setBudgetReplyMessage('');
         loadData();
-        alert('Reply email dispatched to customer successfully!');
+        showNotice('success', 'Reply email dispatched to customer successfully!');
       } else {
-        alert(result.data?.error || result.error || 'Failed to send reply');
+        showNotice('error', result.data?.error || result.error || 'Failed to send reply.');
       }
     } catch (e: any) {
-      alert(e.message);
+      showNotice('error', e.message);
     } finally {
       setIsSendingBudgetReply(false);
     }
@@ -647,10 +652,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     try {
       const result = await safeFetchJson<any>('/api/admin/email/test-connection', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
+        headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           recipientEmail: settingsOwnerEmail.trim() || 'muhammedalimdd@gmail.com'
         })
@@ -660,7 +662,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         success: !!data.success,
         recipient: data.recipient || settingsOwnerEmail || 'muhammedalimdd@gmail.com',
         subject: data.subject || 'AI VIDEO MAKER — TEST EMAIL',
-        message: data.message || (result.ok ? 'Congratulations! Your ZENVORA email notification system is connected. New customer video requests will be delivered to this Gmail inbox.' : 'Connection attempt failed'),
+        message:
+          data.message ||
+          (result.ok
+            ? 'Your AI TIMES email notification system is connected. New customer video requests will be delivered to this Gmail inbox.'
+            : 'Connection attempt failed'),
         error: data.error || result.error
       });
       loadData();
@@ -683,17 +689,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     try {
       const result = await safeFetchJson<any>(`/api/admin/email/${logId}/retry`, {
         method: 'POST',
-        headers: { 'x-admin-key': adminToken }
+        headers: getAdminHeaders()
       });
       const data = result.data || {};
       if (result.ok && data.success) {
-        alert('Email successfully sent to recipient!');
+        showNotice('success', 'Email successfully sent to recipient!');
       } else {
-        alert(`Retry failed: ${data.error || result.error || 'Check SMTP / App Password credentials in Settings'}`);
+        showNotice(
+          'error',
+          `Retry failed: ${data.error || result.error || 'Check email configuration in Settings'}`
+        );
       }
       loadData();
     } catch (e: any) {
-      alert(`Retry error: ${e.message}`);
+      showNotice('error', `Retry error: ${e.message}`);
     } finally {
       setRetryingLogId(null);
     }
@@ -705,17 +714,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     try {
       const result = await safeFetchJson<any>(`/api/admin/requests/${requestId}/resend-owner-email`, {
         method: 'POST',
-        headers: { 'x-admin-key': adminToken }
+        headers: getAdminHeaders()
       });
       const data = result.data || {};
       if (result.ok && data.success) {
-        alert(`Complete video request brief dispatched to ${settingsOwnerEmail || 'muhammedalimdd@gmail.com'}!`);
+        showNotice(
+          'success',
+          `Complete video request brief dispatched to ${settingsOwnerEmail || 'muhammedalimdd@gmail.com'}!`
+        );
       } else {
-        alert(`Failed to send email: ${data.error || result.error || 'Please configure SMTP in settings.'}`);
+        showNotice(
+          'error',
+          `Failed to send email: ${data.error || result.error || 'Please configure email delivery in settings.'}`
+        );
       }
       loadData();
     } catch (e: any) {
-      alert(`Error: ${e.message}`);
+      showNotice('error', `Error: ${e.message}`);
     } finally {
       setIsResendingOwnerEmail(false);
     }
@@ -728,10 +743,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     try {
       const result = await safeFetchJson<any>('/api/admin/settings', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-key': adminToken
-        },
+        headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           ownerNotificationEmail: settingsOwnerEmail.trim(),
           emailFromAddress: settingsFromEmail.trim(),
@@ -745,17 +757,76 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         })
       });
       if (result.ok) {
-        alert('Email settings saved successfully! You can now test the Gmail connection.');
+        showNotice('success', 'Email settings saved successfully!');
         loadData();
       } else {
-        alert(result.data?.error || result.error || 'Failed to save settings');
+        showNotice('error', result.data?.error || result.error || 'Failed to save settings');
       }
     } catch (e: any) {
-      alert(`Error: ${e.message}`);
+      showNotice('error', `Error: ${e.message}`);
     } finally {
       setIsSavingSettings(false);
     }
   };
+
+  // Change Admin Password Workflow
+  const handleChangeAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePwNotice(null);
+    if (!currentAdminPw || !newAdminPw || !confirmNewAdminPw) {
+      setChangePwNotice({ type: 'error', text: 'Please fill in all password fields.' });
+      return;
+    }
+    if (newAdminPw.length < 8) {
+      setChangePwNotice({ type: 'error', text: 'New password must be at least 8 characters long.' });
+      return;
+    }
+    if (newAdminPw !== confirmNewAdminPw) {
+      setChangePwNotice({ type: 'error', text: 'New passwords do not match.' });
+      return;
+    }
+
+    setIsChangingPw(true);
+    try {
+      const res = await safeFetchJson<{ success?: boolean; message?: string; error?: string }>(
+        '/api/admin/change-password',
+        {
+          method: 'POST',
+          headers: getAdminHeaders(adminToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            currentPassword: currentAdminPw,
+            newPassword: newAdminPw,
+            confirmPassword: confirmNewAdminPw
+          })
+        }
+      );
+      if (!res.ok) {
+        throw new Error(res.data?.error || res.error || 'Failed to update admin password.');
+      }
+      setCurrentAdminPw('');
+      setNewAdminPw('');
+      setConfirmNewAdminPw('');
+      setChangePwNotice({
+        type: 'success',
+        text: res.data?.message || 'Administrator password updated successfully.'
+      });
+    } catch (err: any) {
+      setChangePwNotice({ type: 'error', text: err.message || 'Password update failed.' });
+    } finally {
+      setIsChangingPw(false);
+    }
+  };
+
+  if (isCheckingAuth) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3 text-slate-300 text-xs">
+          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <span>Verifying private studio access...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return (
@@ -768,52 +839,174 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               className="w-full h-full object-cover"
             />
           </div>
-          <h3 className="text-xl font-bold text-white mb-1">AI TIMES Studio Admin</h3>
-          <p className="text-xs text-slate-400 mb-6">
-            Enter your studio admin passphrase to manage video briefs, custom quotes, users, and deliveries.
-          </p>
 
-          {loginError && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs">
-              {loginError}
-            </div>
+          {!isInitialized ? (
+            <>
+              <h3 className="text-xl font-bold text-white mb-1">Owner Admin Setup</h3>
+              <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+                Set a private password for the studio owner account (<span className="font-mono text-indigo-300">ali</span>). This one-time setup locks automatically once saved.
+              </p>
+
+              {loginError && (
+                <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs">
+                  {loginError}
+                </div>
+              )}
+
+              <form onSubmit={handleInitialSetup} className="space-y-3.5 text-left">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Admin Username
+                  </label>
+                  <input
+                    type="text"
+                    value="ali"
+                    readOnly
+                    className="w-full px-4 py-2.5 bg-[#0C1220]/70 border border-slate-800 rounded-xl text-indigo-300 font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Create Admin Password (min. 8 characters)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      placeholder="Enter secure password"
+                      className="w-full px-4 py-2.5 pr-10 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
+                      required
+                      minLength={8}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-2.5 text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Confirm Admin Password
+                  </label>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={confirmPasswordInput}
+                    onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full px-4 py-2.5 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
+                    required
+                    minLength={8}
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isLoggingIn}
+                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-sm cursor-pointer transition-all"
+                  >
+                    {isLoggingIn ? 'Initializing...' : 'Save & Open Studio'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-sm cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </form>
+            </>
+          ) : (
+            <>
+              <h3 className="text-xl font-bold text-white mb-1">Private Owner Login</h3>
+              <p className="text-xs text-slate-400 mb-6">
+                Restricted studio administration portal. Sign in with your owner credentials.
+              </p>
+
+              {loginError && (
+                <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs">
+                  {loginError}
+                </div>
+              )}
+
+              <form onSubmit={handleLogin} className="space-y-3.5 text-left">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Admin Username
+                  </label>
+                  <input
+                    type="text"
+                    value={usernameInput}
+                    onChange={(e) => setUsernameInput(e.target.value)}
+                    placeholder="Enter admin username"
+                    autoComplete="username"
+                    className="w-full px-4 py-3 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm font-mono"
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Admin Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      placeholder="Enter admin password"
+                      autoComplete="current-password"
+                      className="w-full px-4 py-3 pr-10 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3 text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isLoggingIn}
+                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-sm cursor-pointer transition-all flex items-center justify-center gap-2"
+                  >
+                    <Lock className="w-4 h-4" />
+                    <span>{isLoggingIn ? 'Signing In...' : 'Access Dashboard'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-sm cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </form>
+            </>
           )}
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <input
-              type="password"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              placeholder="Admin passphrase..."
-              className="w-full px-4 py-3 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
-              autoFocus
-            />
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm cursor-pointer transition-all"
-              >
-                Access Dashboard
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-sm cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </form>
         </div>
       </div>
     );
   }
 
-  const filteredUsers = users.filter(
-    (u) =>
-      u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
-      u.displayName?.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const filteredUsers = users.filter((u) => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.displayName || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="fixed inset-0 z-50 bg-[#060911] text-slate-100 flex flex-col overflow-hidden animate-fadeIn">
@@ -831,11 +1024,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <span>AI TIMES Studio Admin</span>
               <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
-                LIVE
+                OWNER: ALI
               </span>
             </h2>
             <p className="text-[11px] text-slate-400">
-              Notification recipient: <span className="text-indigo-300 font-mono">{settings?.ownerNotificationEmail || 'muhammedalimdd@gmail.com'}</span>
+              Notification recipient:{' '}
+              <span className="text-indigo-300 font-mono">
+                {settings?.ownerNotificationEmail || 'muhammedalimdd@gmail.com'}
+              </span>
             </p>
           </div>
         </div>
@@ -858,7 +1054,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               }`}
             >
               <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Google Users & Trials ({users.length})</span>
+              <span>Customer Accounts ({users.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('budget')}
@@ -867,7 +1063,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               }`}
             >
               <Sparkles className="w-3 h-3 text-cyan-300" />
-              <span>Budget Ideas ({budgetRequests.length})</span>
+              <span>Custom Inquiries ({budgetRequests.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('emails')}
@@ -885,15 +1081,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             >
               Settings
             </button>
-            <button
-              onClick={() => setActiveTab('firestore')}
-              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'firestore' ? 'bg-amber-600 text-white shadow-sm' : 'text-amber-400 hover:text-white'
-              }`}
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>Firebase Database</span>
-            </button>
           </div>
 
           <button
@@ -903,14 +1090,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             title="Test real email dispatch to muhammedalimdd@gmail.com"
           >
             <Mail className="w-3.5 h-3.5" />
-            <span>{isTestingEmail ? 'Testing...' : 'TEST GMAIL CONNECTION'}</span>
+            <span>{isTestingEmail ? 'Testing...' : 'TEST EMAIL CONNECTION'}</span>
           </button>
 
           <button
-            onClick={() => {
-              localStorage.removeItem('studio_admin_token');
-              setIsAuthenticated(false);
-            }}
+            onClick={handleAdminLogout}
             className="text-xs text-slate-400 hover:text-rose-400 px-2.5 py-1.5 cursor-pointer"
           >
             Logout
@@ -926,27 +1110,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-6 max-w-7xl mx-auto w-full">
+      <main className="flex-1 overflow-y-auto p-6 max-w-7xl mx-auto w-full space-y-6">
+        {dashboardNotice && (
+          <div
+            className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+              dashboardNotice.type === 'success'
+                ? 'bg-emerald-950/60 border-emerald-700 text-emerald-200'
+                : 'bg-rose-950/60 border-rose-700 text-rose-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {dashboardNotice.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span>{dashboardNotice.text}</span>
+            </div>
+            <button
+              onClick={() => setDashboardNotice(null)}
+              className="text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* TAB 1: VIDEO REQUESTS */}
         {activeTab === 'requests' && (
           <div className="space-y-6 animate-fadeIn">
             {/* Metric Cards Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="p-4 rounded-xl bg-[#090D16] border border-slate-800">
                 <span className="text-[10px] font-bold uppercase text-slate-400">Total Requests</span>
                 <p className="text-2xl font-black text-white mt-1">{stats.total || requests.length}</p>
               </div>
               <div className="p-4 rounded-xl bg-[#090D16] border border-slate-800">
-                <span className="text-[10px] font-bold uppercase text-emerald-400 flex items-center gap-1">
-                  <Gift className="w-3 h-3" /> Free Trials
-                </span>
-                <p className="text-2xl font-black text-emerald-300 mt-1">{stats.freeTrial || 0}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-[#090D16] border border-slate-800">
                 <span className="text-[10px] font-bold uppercase text-indigo-400 flex items-center gap-1">
-                  <CreditCard className="w-3 h-3" /> Paid Requests
+                  <CreditCard className="w-3 h-3" /> Paid Workflow
                 </span>
-                <p className="text-2xl font-black text-indigo-300 mt-1">{stats.paid || 0}</p>
+                <p className="text-2xl font-black text-indigo-300 mt-1">{stats.paid || requests.length}</p>
               </div>
               <div className="p-4 rounded-xl bg-[#090D16] border border-slate-800">
                 <span className="text-[10px] font-bold uppercase text-amber-400">Under Review</span>
@@ -954,7 +1157,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               </div>
               <div className="p-4 rounded-xl bg-[#090D16] border border-slate-800">
                 <span className="text-[10px] font-bold uppercase text-cyan-400">Quote Awaiting</span>
-                <p className="text-2xl font-black text-cyan-300 mt-1">{stats.awaitingCustomerQuoteApproval || 0}</p>
+                <p className="text-2xl font-black text-cyan-300 mt-1">
+                  {stats.awaitingCustomerQuoteApproval || 0}
+                </p>
               </div>
               <div className="p-4 rounded-xl bg-[#090D16] border border-slate-800">
                 <span className="text-[10px] font-bold uppercase text-purple-400">In Production</span>
@@ -969,15 +1174,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             {/* Filter Bar */}
             <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-[#090D16] border border-slate-800">
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                {['all', 'free_trial', 'paid', 'quoted', 'in_production', 'completed'].map((f) => (
+                {['all', 'paid', 'quoted', 'approved', 'in_production', 'completed'].map((f) => (
                   <button
                     key={f}
                     onClick={() => {
                       setStatusFilter(f);
-                      setTimeout(() => loadData(), 50);
+                      loadData(adminToken, f);
                     }}
                     className={`px-3 py-1.5 rounded-lg font-semibold uppercase tracking-wider text-[10px] transition-all cursor-pointer ${
-                      statusFilter === f ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'
+                      statusFilter === f
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-900 text-slate-400 hover:text-white'
                     }`}
                   >
                     {f.replace('_', ' ')}
@@ -1003,7 +1210,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                     <th className="py-3 px-4">Type</th>
                     <th className="py-3 px-4">Customer</th>
                     <th className="py-3 px-4">Project Title</th>
-                    <th className="py-3 px-4">Style & Platform</th>
+                    <th className="py-3 px-4">Style &amp; Platform</th>
                     <th className="py-3 px-4">Quote / Pricing</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 text-right">Actions</th>
@@ -1017,88 +1224,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                       </td>
                     </tr>
                   ) : (
-                    requests.map((r) => {
-                      const isTrial = r.requestType === 'free_trial';
-                      return (
-                        <tr
-                          key={r.id}
-                          onClick={() => openRequestDrawer(r.id)}
-                          className="hover:bg-slate-800/30 transition-colors cursor-pointer group"
-                        >
-                          <td className="py-3.5 px-4 font-mono font-bold text-indigo-400">
-                            {r.id}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                isTrial
-                                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
-                                  : 'bg-indigo-950/80 text-indigo-300 border border-indigo-800'
-                              }`}
-                            >
-                              {isTrial ? <Gift className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                              <span>{isTrial ? 'Free Trial' : 'Paid'}</span>
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <span className="font-bold text-white block group-hover:text-indigo-200">
-                              {r.customerName}
-                              {r.customerUsername && (
-                                <span className="ml-1.5 text-[10px] font-mono text-purple-300">
-                                  (@{r.customerUsername})
-                                </span>
-                              )}
-                            </span>
-                            <span className="text-indigo-300 font-mono text-[11px]" title="Email Address for Video Delivery">
-                              {r.customerEmail}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-4 font-semibold text-white max-w-xs truncate">
-                            {r.title}
-                          </td>
-                          <td className="py-3.5 px-4 text-slate-300">
-                            {r.style} <span className="text-slate-500">· {r.format}</span>
-                          </td>
-                          <td className="py-3.5 px-4">
-                            {isTrial ? (
-                              <span className="text-emerald-400 font-semibold">1-Time Free Trial</span>
-                            ) : r.quote?.status === 'sent' ? (
-                              <span className="text-cyan-300 font-bold">{r.quote.formattedAmount} (Sent)</span>
-                            ) : r.quote?.status === 'accepted' ? (
-                              <span className="text-emerald-300 font-bold">{r.quote.formattedAmount} (Accepted)</span>
-                            ) : (
-                              <span className="text-slate-400">Needs Custom Quote</span>
+                    requests.map((r) => (
+                      <tr
+                        key={r.id}
+                        onClick={() => openRequestDrawer(r.id)}
+                        className="hover:bg-slate-800/30 transition-colors cursor-pointer group"
+                      >
+                        <td className="py-3.5 px-4 font-mono font-bold text-indigo-400">{r.id}</td>
+                        <td className="py-3.5 px-4">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-950/80 text-indigo-300 border border-indigo-800">
+                            <CreditCard className="w-3 h-3" />
+                            <span>Paid</span>
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="font-bold text-white block group-hover:text-indigo-200">
+                            {r.customerName}
+                            {r.customerUsername && (
+                              <span className="ml-1.5 text-[10px] font-mono text-purple-300">
+                                (@{r.customerUsername})
+                              </span>
                             )}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <span
-                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                                r.status === 'Completed' || r.status === 'Delivered'
-                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                                  : r.status === 'In Production'
-                                  ? 'bg-purple-950 text-purple-300 border border-purple-800'
-                                  : r.status === 'Approved'
-                                  ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
-                                  : 'bg-slate-800 text-slate-300 border border-slate-700'
-                              }`}
-                            >
-                              {r.status}
+                          </span>
+                          <span
+                            className="text-indigo-300 font-mono text-[11px]"
+                            title="Email Address for Video Delivery"
+                          >
+                            {r.customerEmail}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 font-semibold text-white max-w-xs truncate">
+                          {r.title}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-300">
+                          {r.style} <span className="text-slate-500">· {r.format}</span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {r.quote?.status === 'sent' ? (
+                            <span className="text-cyan-300 font-bold">
+                              {r.quote.formattedAmount} (Sent)
                             </span>
-                          </td>
-                          <td className="py-3.5 px-4 text-right">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openRequestDrawer(r.id);
-                              }}
-                              className="px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white font-semibold text-xs cursor-pointer"
-                            >
-                              Manage &rarr;
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
+                          ) : r.quote?.status === 'accepted' ? (
+                            <span className="text-emerald-300 font-bold">
+                              {r.quote.formattedAmount} (Accepted)
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">Needs Custom Quote</span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                              r.status === 'Completed' || r.status === 'Delivered'
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                : r.status === 'In Production'
+                                ? 'bg-purple-950 text-purple-300 border border-purple-800'
+                                : r.status === 'Approved'
+                                ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                                : 'bg-slate-800 text-slate-300 border border-slate-700'
+                            }`}
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRequestDrawer(r.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white font-semibold text-xs cursor-pointer"
+                          >
+                            Manage &rarr;
+                          </button>
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
@@ -1106,17 +1307,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           </div>
         )}
 
-        {/* TAB 2: GOOGLE USERS & FREE TRIAL MANAGEMENT */}
+        {/* TAB 2: CUSTOMER ACCOUNTS MANAGEMENT */}
         {activeTab === 'users' && (
           <div className="space-y-6 animate-fadeIn">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <UserCheck className="w-5 h-5 text-emerald-400" />
-                  <span>Authenticated Google Users & 1-Time Free Trial Accounts</span>
+                  <span>Registered Customer Accounts</span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Every user registers with their real Google account. You can review trial usage and reset eligibility if necessary with an audit record.
+                  Customers register their own personal username and password. Each customer can only access their own private video requests.
                 </p>
               </div>
 
@@ -1125,7 +1326,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   type="text"
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search user email or name..."
+                  placeholder="Search username or email..."
                   className="w-full px-3 py-2 bg-[#0C1220] border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500"
                 />
               </div>
@@ -1136,83 +1337,74 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 bg-[#0C1220] text-slate-400 font-semibold text-[11px] uppercase tracking-wider">
-                    <th className="py-3 px-4">User</th>
-                    <th className="py-3 px-4">Verified Google Email</th>
-                    <th className="py-3 px-4">First Joined</th>
-                    <th className="py-3 px-4">Trial Status</th>
-                    <th className="py-3 px-4">Trial Request ID</th>
-                    <th className="py-3 px-4 text-right">Trial Management</th>
+                    <th className="py-3 px-4">Username / Name</th>
+                    <th className="py-3 px-4">UID</th>
+                    <th className="py-3 px-4">Recovery Email</th>
+                    <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Requests</th>
+                    <th className="py-3 px-4">Joined</th>
+                    <th className="py-3 px-4 text-right">Last Login</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-slate-500">
-                        No Google users registered yet.
+                      <td colSpan={7} className="py-12 text-center text-slate-500">
+                        No customer accounts registered yet.
                       </td>
                     </tr>
                   ) : (
-                    filteredUsers.map((u) => {
-                      const isEligible = u.trialStatus === 'eligible';
-                      return (
-                        <tr key={u.uid} className="hover:bg-slate-800/30">
-                          <td className="py-3.5 px-4 flex items-center gap-2.5">
-                            {u.photoURL ? (
-                              <img src={u.photoURL} alt={u.displayName} className="w-7 h-7 rounded-full object-cover" />
-                            ) : (
-                              <div className="w-7 h-7 rounded-full bg-indigo-900/60 text-indigo-300 flex items-center justify-center font-bold text-xs">
-                                {u.displayName?.[0] || 'U'}
-                              </div>
-                            )}
-                            <span className="font-bold text-white">{u.displayName}</span>
-                          </td>
-                          <td className="py-3.5 px-4 font-mono text-slate-300">{u.email}</td>
-                          <td className="py-3.5 px-4 text-slate-400">{new Date(u.createdAt).toLocaleDateString()}</td>
-                          <td className="py-3.5 px-4">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                isEligible
-                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                                  : 'bg-slate-800 text-slate-400 border border-slate-700'
-                              }`}
-                            >
-                              {isEligible ? '🎁 1 Free Available' : 'Trial Consumed'}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-4 font-mono text-indigo-400">
-                            {u.trialRequestId || '—'}
-                          </td>
-                          <td className="py-3.5 px-4 text-right">
-                            {!isEligible ? (
-                              <button
-                                onClick={() => handleResetTrial(u.uid, u.email)}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-xs cursor-pointer"
-                              >
-                                Reset Free Trial &rarr;
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-emerald-400 font-semibold">Ready for 1st Video</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
+                    filteredUsers.map((u) => (
+                      <tr key={u.uid} className="hover:bg-slate-800/30">
+                        <td className="py-3.5 px-4 flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-full bg-indigo-900/60 text-indigo-300 flex items-center justify-center font-bold text-xs">
+                            {(u.username || u.displayName || 'U')[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <span className="font-bold text-white font-mono">@{u.username || u.displayName}</span>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-slate-400 text-[11px]">{u.uid}</td>
+                        <td className="py-3.5 px-4 font-mono text-slate-300">
+                          {u.email && !u.email.endsWith('@aivideomaker.local') ? u.email : '—'}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-950 text-indigo-300 border border-indigo-800">
+                            {u.role || 'customer'}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-cyan-300 font-bold">
+                          {u.requestCount ?? 0}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-400">
+                          {new Date(u.createdAt).toLocaleDateString()}
+                        </td>
+                        <td className="py-3.5 px-4 text-right text-slate-400 text-[11px]">
+                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
             </div>
 
-            {/* Audit Logs */}
             {auditLogs.length > 0 && (
               <div className="p-5 rounded-2xl bg-[#090D16] border border-slate-800 space-y-3">
-                <h4 className="text-sm font-bold text-white">Trial Status Audit Trail</h4>
+                <h4 className="text-sm font-bold text-white">Security &amp; Audit Trail</h4>
                 <div className="space-y-2 max-h-48 overflow-y-auto text-xs">
                   {auditLogs.map((a) => (
-                    <div key={a.id} className="p-2.5 rounded-lg bg-[#0C1220] border border-slate-800/80 flex items-center justify-between">
+                    <div
+                      key={a.id}
+                      className="p-2.5 rounded-lg bg-[#0C1220] border border-slate-800/80 flex items-center justify-between"
+                    >
                       <div>
-                        <span className="text-indigo-400 font-mono font-semibold">{a.targetUserEmail}</span>: {a.details}
+                        <span className="text-indigo-400 font-mono font-semibold">{a.targetUserEmail}</span>:{' '}
+                        {a.details}
                       </div>
-                      <span className="text-slate-500 text-[10px]">{new Date(a.timestamp).toLocaleString()}</span>
+                      <span className="text-slate-500 text-[10px]">
+                        {new Date(a.timestamp).toLocaleString()}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1221,17 +1413,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           </div>
         )}
 
-        {/* TAB 3: IDEA & BUDGET REQUESTS */}
+        {/* TAB 3: IDEA & CUSTOM INQUIRIES */}
         {activeTab === 'budget' && (
           <div className="space-y-6 animate-fadeIn">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-cyan-400" />
-                  <span>Direct Contact & Video Budget Inquiries</span>
+                  <span>Direct Contact &amp; Custom Video Inquiries</span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Submissions from the "Contact Us & Request a Custom AI Video" form.
+                  Submissions from the &ldquo;Contact Us &amp; Request a Custom AI Video&rdquo; form.
                 </p>
               </div>
               <button
@@ -1243,7 +1435,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               </button>
             </div>
 
-            {/* Budget Table */}
             <div className="rounded-2xl bg-[#090D16] border border-slate-800 overflow-hidden">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
@@ -1251,7 +1442,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                     <th className="py-3 px-4">Request ID</th>
                     <th className="py-3 px-4">Customer</th>
                     <th className="py-3 px-4">Video Idea</th>
-                    <th className="py-3 px-4">Budget Tier</th>
+                    <th className="py-3 px-4">Pricing Note</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 text-right">Action</th>
                   </tr>
@@ -1260,16 +1451,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   {budgetRequests.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-500">
-                        No budget inquiries yet.
+                        No custom inquiries yet.
                       </td>
                     </tr>
                   ) : (
                     budgetRequests.map((b) => (
-                      <tr key={b.id} onClick={() => openBudgetDrawer(b.id)} className="hover:bg-slate-800/30 cursor-pointer">
+                      <tr
+                        key={b.id}
+                        onClick={() => openBudgetDrawer(b.id)}
+                        className="hover:bg-slate-800/30 cursor-pointer"
+                      >
                         <td className="py-3.5 px-4 font-mono font-bold text-cyan-400">{b.id}</td>
-                        <td className="py-3.5 px-4 font-bold text-white">{b.fullName} ({b.email})</td>
+                        <td className="py-3.5 px-4 font-bold text-white">
+                          {b.fullName} ({b.email})
+                        </td>
                         <td className="py-3.5 px-4 text-slate-300 max-w-xs truncate">{b.videoIdea}</td>
-                        <td className="py-3.5 px-4 font-bold text-emerald-400">{b.budgetCategory} ({b.budgetAmount})</td>
+                        <td className="py-3.5 px-4 font-semibold text-indigo-300">{b.budgetAmount}</td>
                         <td className="py-3.5 px-4 text-slate-300">{b.status}</td>
                         <td className="py-3.5 px-4 text-right">
                           <button
@@ -1277,7 +1474,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                               e.stopPropagation();
                               openBudgetDrawer(b.id);
                             }}
-                            className="px-3 py-1 rounded bg-indigo-600 text-white font-bold"
+                            className="px-3 py-1 rounded bg-indigo-600 text-white font-bold cursor-pointer"
                           >
                             Reply &rarr;
                           </button>
@@ -1294,7 +1491,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         {/* TAB 4: EMAIL LOGS */}
         {activeTab === 'emails' && (
           <div className="space-y-6 animate-fadeIn">
-            {/* Connection Test Result Banner */}
             {testEmailResult && (
               <div
                 className={`p-4 rounded-2xl border flex items-start justify-between gap-3 ${
@@ -1311,11 +1507,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   )}
                   <div>
                     <h4 className="font-bold text-sm">
-                      {testEmailResult.success ? 'TEST EMAIL DISPATCHED SUCCESSFULLY' : 'GMAIL CONNECTION TEST FAILED'}
+                      {testEmailResult.success
+                        ? 'TEST EMAIL DISPATCHED SUCCESSFULLY'
+                        : 'EMAIL CONNECTION TEST FAILED'}
                     </h4>
                     <p className="text-xs mt-0.5 opacity-90">{testEmailResult.message}</p>
                     <p className="text-[11px] mt-1 font-mono">
-                      Destination: <strong>{testEmailResult.recipient}</strong> &bull; Subject: <em>{testEmailResult.subject}</em>
+                      Destination: <strong>{testEmailResult.recipient}</strong> &bull; Subject:{' '}
+                      <em>{testEmailResult.subject}</em>
                     </p>
                     {testEmailResult.error && (
                       <p className="text-xs text-rose-300 bg-black/40 p-2 rounded mt-2 font-mono">
@@ -1326,7 +1525,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </div>
                 <button
                   onClick={() => setTestEmailResult(null)}
-                  className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+                  className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1340,7 +1539,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   <span>Automatic Request Email Delivery Logs</span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Every request submitted by a user is automatically dispatched to <strong className="text-indigo-300 font-mono">{settingsOwnerEmail || 'muhammedalimdd@gmail.com'}</strong>.
+                  Every submitted request is automatically dispatched to{' '}
+                  <strong className="text-indigo-300 font-mono">
+                    {settingsOwnerEmail || 'muhammedalimdd@gmail.com'}
+                  </strong>
+                  .
                 </p>
               </div>
 
@@ -1351,7 +1554,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Mail className="w-3.5 h-3.5" />
-                  <span>{isTestingEmail ? 'Sending Test...' : 'TEST GMAIL CONNECTION'}</span>
+                  <span>{isTestingEmail ? 'Sending Test...' : 'TEST EMAIL CONNECTION'}</span>
                 </button>
                 <button
                   onClick={() => loadData()}
@@ -1363,7 +1566,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               </div>
             </div>
 
-            {/* Email Logs Table */}
             <div className="rounded-2xl bg-[#090D16] border border-slate-800 overflow-hidden text-xs">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -1412,10 +1614,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                             {l.type === 'video_delivery' && 'Video Delivery'}
                             {l.type === 'quote_sent' && 'Custom Quote'}
                             {l.type === 'payment_confirmed' && 'Payment Verified'}
-                            {l.type === 'budget_request_owner' && 'Budget Inq (Owner)'}
-                            {l.type === 'budget_request_customer' && 'Budget Inq (Customer)'}
+                            {l.type === 'budget_request_owner' && 'Custom Inquiry (Owner)'}
+                            {l.type === 'budget_request_customer' && 'Custom Inquiry (Customer)'}
+                            {l.type === 'password_reset' && 'Password Reset OTP'}
                             {l.type === 'test_connection' && 'Connection Test'}
-                            {!['owner_new_request', 'customer_confirmation', 'video_delivery', 'quote_sent', 'payment_confirmed', 'budget_request_owner', 'budget_request_customer', 'test_connection'].includes(l.type) && l.type}
+                            {![
+                              'owner_new_request',
+                              'customer_confirmation',
+                              'video_delivery',
+                              'quote_sent',
+                              'payment_confirmed',
+                              'budget_request_owner',
+                              'budget_request_customer',
+                              'password_reset',
+                              'test_connection'
+                            ].includes(l.type) && l.type}
                           </td>
                           <td className="py-3.5 px-4 font-mono text-white font-medium">
                             {l.recipient}
@@ -1444,7 +1657,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                                 disabled={retryingLogId === l.id}
                                 className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] cursor-pointer inline-flex items-center gap-1"
                               >
-                                <RotateCcw className={`w-3 h-3 ${retryingLogId === l.id ? 'animate-spin' : ''}`} />
+                                <RotateCcw
+                                  className={`w-3 h-3 ${retryingLogId === l.id ? 'animate-spin' : ''}`}
+                                />
                                 <span>{retryingLogId === l.id ? 'Retrying...' : 'Retry'}</span>
                               </button>
                             )}
@@ -1459,20 +1674,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           </div>
         )}
 
-        {/* TAB 5: SETTINGS */}
+        {/* TAB 5: SETTINGS & ADMIN PASSWORD */}
         {activeTab === 'settings' && (
-          <div className="max-w-3xl space-y-6 animate-fadeIn">
+          <div className="max-w-3xl space-y-8 animate-fadeIn">
             <div>
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <Mail className="w-5 h-5 text-indigo-400" />
                 <span>Automatic Gmail Request Notification Settings</span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Configure your Gmail or SMTP delivery parameters so every customer request arrives directly in your Gmail inbox at <strong className="text-indigo-300 font-mono">muhammedalimdd@gmail.com</strong>.
+                Configure your Gmail or SMTP delivery parameters so every customer request arrives directly in your Gmail inbox at{' '}
+                <strong className="text-indigo-300 font-mono">muhammedalimdd@gmail.com</strong>.
               </p>
             </div>
 
-            {/* Test Connection Banner */}
             {testEmailResult && (
               <div
                 className={`p-4 rounded-2xl border flex items-start justify-between gap-3 ${
@@ -1504,22 +1719,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </div>
                 <button
                   onClick={() => setTestEmailResult(null)}
-                  className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+                  className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             )}
 
-            {/* QUICK TEST PANEL */}
             <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-indigo-950/30 to-slate-900 border border-emerald-700/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 block mb-1">
                   1-Click Direct Verification
                 </span>
-                <h4 className="text-sm font-bold text-white">Test Gmail Connection</h4>
+                <h4 className="text-sm font-bold text-white">Test Email Connection</h4>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  Sends an immediate test email to <strong className="text-indigo-300 font-mono">{settingsOwnerEmail || 'muhammedalimdd@gmail.com'}</strong> with subject <em className="text-white">"AI VIDEO MAKER — TEST EMAIL"</em>.
+                  Sends an immediate test email to{' '}
+                  <strong className="text-indigo-300 font-mono">
+                    {settingsOwnerEmail || 'muhammedalimdd@gmail.com'}
+                  </strong>{' '}
+                  with subject <em className="text-white">&ldquo;AI VIDEO MAKER — TEST EMAIL&rdquo;</em>.
                 </p>
               </div>
               <button
@@ -1529,19 +1747,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
               >
                 <Mail className="w-4 h-4" />
-                <span>{isTestingEmail ? 'Sending Test...' : 'TEST GMAIL CONNECTION'}</span>
+                <span>{isTestingEmail ? 'Sending Test...' : 'TEST EMAIL CONNECTION'}</span>
               </button>
             </div>
 
-            {/* FORM CONFIGURATION */}
-            <form onSubmit={handleSaveSettings} className="p-6 rounded-2xl bg-[#090D16] border border-slate-800 space-y-5">
+            <form
+              onSubmit={handleSaveSettings}
+              className="p-6 rounded-2xl bg-[#090D16] border border-slate-800 space-y-5"
+            >
               <div>
                 <label className="block text-xs font-bold text-slate-200 mb-1">
-                  Owner's Destination Gmail Address (Required)
+                  Owner&apos;s Destination Gmail Address (Required)
                 </label>
-                <p className="text-[11px] text-slate-400 mb-2">
-                  All new video requests and customer briefs will be delivered directly to this Gmail address.
-                </p>
                 <input
                   type="email"
                   value={settingsOwnerEmail}
@@ -1560,7 +1777,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   type="text"
                   value={settingsFromEmail}
                   onChange={(e) => setSettingsFromEmail(e.target.value)}
-                  placeholder="muhammedalimdd@gmail.com or studio@aivideomaker.com"
+                  placeholder="muhammedalimdd@gmail.com"
                   className="w-full px-4 py-3 bg-[#0C1220] border border-slate-800 rounded-xl text-white text-sm font-mono focus:border-indigo-500 focus:outline-none"
                 />
               </div>
@@ -1593,15 +1810,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              {/* GMAIL & SMTP CONFIGURATION FIELDS */}
               {(settingsProvider === 'gmail' || settingsProvider === 'smtp') && (
                 <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800/80 space-y-4">
                   {settingsProvider === 'gmail' && (
                     <div className="p-3 bg-indigo-950/40 border border-indigo-800/50 rounded-lg text-xs text-indigo-200 leading-relaxed">
-                      <strong className="text-white block mb-1">How to use Gmail with ZENVORA:</strong>
-                      1. Go to your <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer" className="text-cyan-300 underline font-semibold">Google Account Security</a> settings.<br/>
-                      2. Ensure <strong>2-Step Verification</strong> is ON.<br/>
-                      3. Click <strong>App Passwords</strong> and generate a new password named <em>"ZENVORA"</em>.<br/>
+                      <strong className="text-white block mb-1">How to use Gmail with AI TIMES:</strong>
+                      1. Go to your{' '}
+                      <a
+                        href="https://myaccount.google.com/security"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-300 underline font-semibold"
+                      >
+                        Google Account Security
+                      </a>{' '}
+                      settings.
+                      <br />
+                      2. Ensure <strong>2-Step Verification</strong> is ON.
+                      <br />
+                      3. Click <strong>App Passwords</strong> and generate a new password named{' '}
+                      <em>&ldquo;AI TIMES&rdquo;</em>.<br />
                       4. Paste the 16-character password into the <strong>Google App Password</strong> field below.
                     </div>
                   )}
@@ -1652,7 +1880,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                         <button
                           type="button"
                           onClick={() => setShowSmtpPass(!showSmtpPass)}
-                          className="text-[10px] text-indigo-400 hover:underline"
+                          className="text-[10px] text-indigo-400 hover:underline cursor-pointer"
                         >
                           {showSmtpPass ? 'Hide' : 'Show'}
                         </button>
@@ -1669,14 +1897,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </div>
               )}
 
-              {/* API KEY CONFIGURATION (SERVER ENVIRONMENT NOTICE) */}
               {(settingsProvider === 'resend' || settingsProvider === 'sendgrid') && (
                 <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 space-y-2 text-xs text-slate-300">
                   <p className="font-semibold text-white">
-                    {settingsProvider === 'resend' ? 'Resend Transactional Email API' : 'SendGrid Transactional Email API'}
+                    {settingsProvider === 'resend'
+                      ? 'Resend Transactional Email API'
+                      : 'SendGrid Transactional Email API'}
                   </p>
                   <p className="text-slate-400">
-                    For security, transactional API keys (<code className="text-indigo-300">RESEND_API_KEY</code> or <code className="text-indigo-300">SENDGRID_API_KEY</code>) are read directly from server environment variables (<code className="text-indigo-300">.env</code>).
+                    For security, transactional API keys (<code className="text-indigo-300">RESEND_API_KEY</code> or{' '}
+                    <code className="text-indigo-300">SENDGRID_API_KEY</code>) are read directly from server environment variables.
                   </p>
                 </div>
               )}
@@ -1689,153 +1919,93 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 >
                   {isSavingSettings ? 'Saving...' : 'Save Configuration'}
                 </button>
-
-                <button
-                  type="button"
-                  onClick={handleTestGmailConnection}
-                  disabled={isTestingEmail}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer flex items-center gap-1.5 shadow-md"
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>{isTestingEmail ? 'Testing...' : 'TEST GMAIL CONNECTION'}</span>
-                </button>
               </div>
             </form>
-          </div>
-        )}
 
-        {/* FIREBASE FIRESTORE DATABASE MANAGER TAB */}
-        {activeTab === 'firestore' && (
-          <div className="max-w-5xl mx-auto space-y-6">
-            {/* Header card */}
-            <div className="p-6 rounded-2xl bg-gradient-to-r from-amber-950/30 via-[#0A0E1A] to-indigo-950/30 border border-amber-800/50 shadow-xl space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                    <Database className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-black text-white flex items-center gap-2">
-                      <span>Firebase Firestore Database</span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-                        ONLINE & CONNECTED
-                      </span>
-                    </h3>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">
-                      Database: <span className="text-amber-300">ai-studio-aivideorequestst-8c45d58b-3348-4049-bab8-64b5be4fc37a</span>
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleSeedFirestore}
-                    disabled={isSeedingFirestore}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{isSeedingFirestore ? 'Seeding Live Data...' : 'Seed Sample Data to Firestore'}</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      loadData();
-                    }}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Refresh</span>
-                  </button>
-                </div>
-              </div>
-
-              {firestoreStatusMessage && (
-                <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-800/70 text-xs text-amber-200 flex items-center gap-2 animate-fadeIn">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>{firestoreStatusMessage}</span>
-                </div>
-              )}
-
-              {/* Database Metas */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                <div className="p-3 rounded-xl bg-[#090D16] border border-slate-800">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Project ID</span>
-                  <p className="text-xs font-mono font-bold text-slate-200 truncate mt-0.5">gen-lang-client-0869903114</p>
-                </div>
-                <div className="p-3 rounded-xl bg-[#090D16] border border-slate-800">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Security Rules</span>
-                  <p className="text-xs font-bold text-emerald-400 mt-0.5">ABAC Hardened Rules Active</p>
-                </div>
-                <div className="p-3 rounded-xl bg-[#090D16] border border-slate-800">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Video Requests in DB</span>
-                  <p className="text-xs font-mono font-bold text-indigo-400 mt-0.5">{firestoreRequests.length} documents</p>
-                </div>
-                <div className="p-3 rounded-xl bg-[#090D16] border border-slate-800">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Budget Ideas in DB</span>
-                  <p className="text-xs font-mono font-bold text-cyan-400 mt-0.5">{firestoreBudgets.length} documents</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Firestore Documents Preview */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
+            {/* Change Owner Admin Password */}
+            <form
+              onSubmit={handleChangeAdminPassword}
+              className="p-6 rounded-2xl bg-[#090D16] border border-slate-800 space-y-4"
+            >
+              <div>
                 <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Video className="w-4 h-4 text-indigo-400" />
-                  <span>Firestore Collection: /video_requests ({firestoreRequests.length})</span>
+                  <Key className="w-4 h-4 text-amber-400" />
+                  <span>Change Admin Password (Account: ali)</span>
                 </h4>
-                {firestoreRequests.length === 0 && (
-                  <button
-                    onClick={handleSeedFirestore}
-                    className="text-xs text-amber-400 hover:underline font-semibold"
-                  >
-                    + Click here to populate sample data
-                  </button>
-                )}
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Update your private studio owner password securely using salted cryptographic hashing.
+                </p>
               </div>
 
-              {firestoreRequests.length === 0 ? (
-                <div className="p-8 rounded-2xl bg-[#090D16] border border-slate-800 text-center space-y-3">
-                  <Database className="w-8 h-8 text-slate-600 mx-auto" />
-                  <p className="text-xs text-slate-400">
-                    No documents currently in <span className="font-mono text-amber-300">/video_requests</span>.
-                  </p>
-                  <button
-                    onClick={handleSeedFirestore}
-                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs cursor-pointer"
-                  >
-                    Populate Initial Firebase Data Now
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {firestoreRequests.map((req, i) => (
-                    <div key={i} className="p-4 rounded-xl bg-[#090D16] border border-slate-800 hover:border-slate-700 transition-all space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-amber-400">{req.id}</span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-slate-200">
-                            {req.status}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-950 text-indigo-300 border border-indigo-800">
-                            {req.requestType}
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-slate-500 font-mono">
-                          {new Date(req.createdAt).toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-xs font-bold text-white">{req.title}</p>
-                      <p className="text-[11px] text-slate-400 line-clamp-2">{req.summary || req.storyDescription}</p>
-                      <div className="flex items-center gap-4 text-[10px] text-slate-500 pt-1 border-t border-slate-800/60">
-                        <span>Style: <strong className="text-slate-300">{req.style}</strong></span>
-                        <span>Customer: <strong className="text-slate-300">{req.customerName || req.userEmail}</strong></span>
-                        <span>Format: <strong className="text-slate-300">{req.aspectRatio || req.format}</strong></span>
-                      </div>
-                    </div>
-                  ))}
+              {changePwNotice && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                    changePwNotice.type === 'success'
+                      ? 'bg-emerald-950/60 border-emerald-700 text-emerald-200'
+                      : 'bg-rose-950/60 border-rose-700 text-rose-200'
+                  }`}
+                >
+                  {changePwNotice.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{changePwNotice.text}</span>
                 </div>
               )}
-            </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Current Password
+                  </label>
+                  <input
+                    type="password"
+                    value={currentAdminPw}
+                    onChange={(e) => setCurrentAdminPw(e.target.value)}
+                    placeholder="Current password"
+                    className="w-full px-3 py-2 bg-[#0C1220] border border-slate-800 rounded-lg text-xs text-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    New Password (min 8 chars)
+                  </label>
+                  <input
+                    type="password"
+                    value={newAdminPw}
+                    onChange={(e) => setNewAdminPw(e.target.value)}
+                    placeholder="New password"
+                    className="w-full px-3 py-2 bg-[#0C1220] border border-slate-800 rounded-lg text-xs text-white"
+                    minLength={8}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmNewAdminPw}
+                    onChange={(e) => setConfirmNewAdminPw(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
+                    minLength={8}
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isChangingPw}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-bold text-xs cursor-pointer shadow-md"
+              >
+                {isChangingPw ? 'Updating Password...' : 'Update Admin Password'}
+              </button>
+            </form>
           </div>
         )}
       </main>
@@ -1845,421 +2015,571 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
           <div className="w-full max-w-3xl h-full bg-[#090D16] border-l border-slate-800 flex flex-col justify-between overflow-y-auto p-6 sm:p-8 animate-fadeIn">
             <div>
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-6">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-indigo-400">{selectedRequest.id}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${selectedRequest.requestType === 'free_trial' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-indigo-950 text-indigo-300 border border-indigo-800'}`}>
-                      {selectedRequest.requestType === 'free_trial' ? '🎁 One-Time Free Trial' : '💳 Paid Video Request'}
-                    </span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-cyan-300 border border-slate-700">
-                      {selectedRequest.status}
-                    </span>
-                  </div>
-                  <h3 className="text-xl font-extrabold text-white mt-1">{selectedRequest.title}</h3>
-                  <div className="text-xs text-slate-300 mt-1 space-y-0.5">
-                    <p>
-                      Customer Name: <strong className="text-white">{selectedRequest.customerName}</strong>
-                      {selectedRequest.customerUsername && (
-                        <span className="ml-2 text-purple-300 font-mono">
-                          (Username: @{selectedRequest.customerUsername})
+              {drawerLoading ? (
+                <div className="py-12 text-center text-xs text-slate-400">Loading request details...</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-6">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-bold text-indigo-400">
+                          {selectedRequest.id}
                         </span>
-                      )}
-                    </p>
-                    <p>
-                      Email Address for Video Delivery:{' '}
-                      <strong className="text-indigo-300 font-mono">{selectedRequest.customerEmail}</strong>
-                    </p>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-950 text-indigo-300 border border-indigo-800">
+                          Paid Video Request
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-cyan-300 border border-slate-700">
+                          {selectedRequest.status}
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-extrabold text-white mt-1">
+                        {selectedRequest.title}
+                      </h3>
+                      <div className="text-xs text-slate-300 mt-1 space-y-0.5">
+                        <p>
+                          Customer Name: <strong className="text-white">{selectedRequest.customerName}</strong>
+                          {selectedRequest.customerUsername && (
+                            <span className="ml-2 text-purple-300 font-mono">
+                              (Username: @{selectedRequest.customerUsername})
+                            </span>
+                          )}
+                        </p>
+                        <p>
+                          Email Address for Video Delivery:{' '}
+                          <strong className="text-indigo-300 font-mono">
+                            {selectedRequest.customerEmail}
+                          </strong>
+                        </p>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => handleResendOwnerEmail(selectedRequest.id)}
+                          disabled={isResendingOwnerEmail}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow transition-all disabled:opacity-50"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>
+                            {isResendingOwnerEmail
+                              ? 'Dispatching to Gmail...'
+                              : 'Send / Resend Request to Owner Gmail (muhammedalimdd@gmail.com)'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
                     <button
-                      onClick={() => handleResendOwnerEmail(selectedRequest.id)}
-                      disabled={isResendingOwnerEmail}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow transition-all disabled:opacity-50"
+                      onClick={() => setSelectedRequest(null)}
+                      className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
                     >
-                      <Mail className="w-3.5 h-3.5" />
-                      <span>{isResendingOwnerEmail ? 'Dispatching to Gmail...' : 'Send / Resend Request to Owner Gmail (muhammedalimdd@gmail.com)'}</span>
+                      <X className="w-5 h-5" />
                     </button>
                   </div>
-                </div>
-                <button
-                  onClick={() => setSelectedRequest(null)}
-                  className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
 
-              {/* Email Delivery Logs for this Request (with Retry button if failed) */}
-              {emailLogs.filter((l) => l.requestId === selectedRequest.id).length > 0 && (
-                <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 mb-6 space-y-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
-                    Email Notification Status for {selectedRequest.id}
-                  </span>
-                  <div className="space-y-2">
-                    {emailLogs
-                      .filter((l) => l.requestId === selectedRequest.id)
-                      .map((l) => (
-                        <div
-                          key={l.id}
-                          className="p-2.5 rounded-lg bg-[#090D16] border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs"
-                        >
-                          <div>
-                            <span
-                              className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase mr-2 ${
-                                l.status === 'sent'
-                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                                  : 'bg-rose-950 text-rose-300 border border-rose-800'
-                              }`}
-                            >
-                              {l.status === 'sent' ? '✓ Sent' : '✕ Failed'}
-                            </span>
-                            <span className="text-white font-semibold">{l.type}</span>
-                            <span className="text-slate-400 ml-2 font-mono">→ {l.recipient}</span>
-                            {l.error && <p className="text-[11px] text-rose-400 mt-1">{l.error}</p>}
-                          </div>
-                          {l.status === 'failed' && (
-                            <button
-                              onClick={() => handleRetryEmail(l.id)}
-                              disabled={retryingLogId === l.id}
-                              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] cursor-pointer flex items-center gap-1"
-                            >
-                              <RotateCcw className={`w-3 h-3 ${retryingLogId === l.id ? 'animate-spin' : ''}`} />
-                              <span>{retryingLogId === l.id ? 'Retrying...' : 'Retry Failed Email'}</span>
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Status Update & Date controls */}
-              <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 mb-6 space-y-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
-                  Production Controls
-                </span>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Set Status</label>
-                    <select
-                      value={statusToSet}
-                      onChange={(e) => setStatusToSet(e.target.value as VideoStatus)}
-                      className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
-                    >
-                      <option value="Submitted">Submitted</option>
-                      <option value="Under Review">Under Review</option>
-                      <option value="Approved">Approved</option>
-                      <option value="In Production">In Production</option>
-                      <option value="Quality Check">Quality Check</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Delivered">Delivered</option>
-                      <option value="Cancelled">Cancelled</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Estimated Completion Date</label>
-                    <input
-                      type="date"
-                      value={estDateToSet}
-                      onChange={(e) => setEstDateToSet(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">Customer-Visible Notes</label>
-                  <input
-                    type="text"
-                    value={customerNotesToSet}
-                    onChange={(e) => setCustomerNotesToSet(e.target.value)}
-                    placeholder="e.g. Scene 1 rendered. Currently rendering final shots..."
-                    className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">Add Private Internal Note</label>
-                  <input
-                    type="text"
-                    value={newInternalNote}
-                    onChange={(e) => setNewInternalNote(e.target.value)}
-                    placeholder="Staff notes (never shown to customer)..."
-                    className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
-                  />
-                </div>
-
-                <button
-                  onClick={handleUpdateRequest}
-                  className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
-                >
-                  Save Status & Notes
-                </button>
-              </div>
-
-              {/* CUSTOM QUOTE SECTION (FOR PAID REQUESTS) */}
-              {selectedRequest.requestType === 'paid' && (
-                <div className="p-5 rounded-2xl bg-gradient-to-b from-indigo-950/40 to-slate-900 border border-indigo-700/60 mb-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-indigo-400" />
-                      <span>Prepare & Send Custom Video Quote</span>
-                    </h4>
-                    {selectedRequest.quote && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
-                        Quote Status: {selectedRequest.quote.status.toUpperCase()}
+                  {/* Email Delivery Logs for this Request */}
+                  {emailLogs.filter((l) => l.requestId === selectedRequest.id).length > 0 && (
+                    <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 mb-6 space-y-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                        Email Notification Status for {selectedRequest.id}
                       </span>
-                    )}
-                  </div>
+                      <div className="space-y-2">
+                        {emailLogs
+                          .filter((l) => l.requestId === selectedRequest.id)
+                          .map((l) => (
+                            <div
+                              key={l.id}
+                              className="p-2.5 rounded-lg bg-[#090D16] border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs"
+                            >
+                              <div>
+                                <span
+                                  className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase mr-2 ${
+                                    l.status === 'sent'
+                                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                      : 'bg-rose-950 text-rose-300 border border-rose-800'
+                                  }`}
+                                >
+                                  {l.status === 'sent' ? '✓ Sent' : '✕ Failed'}
+                                </span>
+                                <span className="text-white font-semibold">{l.type}</span>
+                                <span className="text-slate-400 ml-2 font-mono">→ {l.recipient}</span>
+                                {l.error && <p className="text-[11px] text-rose-400 mt-1">{l.error}</p>}
+                              </div>
+                              {l.status === 'failed' && (
+                                <button
+                                  onClick={() => handleRetryEmail(l.id)}
+                                  disabled={retryingLogId === l.id}
+                                  className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] cursor-pointer flex items-center gap-1"
+                                >
+                                  <RotateCcw
+                                    className={`w-3 h-3 ${retryingLogId === l.id ? 'animate-spin' : ''}`}
+                                  />
+                                  <span>
+                                    {retryingLogId === l.id ? 'Retrying...' : 'Retry Failed Email'}
+                                  </span>
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
 
-                  <p className="text-xs text-slate-300">
-                    The customer was informed: <strong className="text-indigo-300">"The payment will be based on the video."</strong> Enter your proposed production cost and send the quote to their email.
-                  </p>
+                  {/* Status Update & Date controls */}
+                  <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 mb-6 space-y-4">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                      Production Controls
+                    </span>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] text-slate-300 mb-1 font-semibold">Quote Amount (Numeric)</label>
-                      <div className="flex gap-1.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                          Set Status
+                        </label>
                         <select
-                          value={quoteCurrency}
-                          onChange={(e) => setQuoteCurrency(e.target.value)}
-                          className="px-2.5 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-bold"
+                          value={statusToSet}
+                          onChange={(e) => setStatusToSet(e.target.value as VideoStatus)}
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
                         >
-                          <option value="₹">₹ (INR)</option>
-                          <option value="$">$ (USD)</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Under Review">Under Review</option>
+                          <option value="Approved">Approved</option>
+                          <option value="In Production">In Production</option>
+                          <option value="Quality Check">Quality Check</option>
+                          <option value="Completed">Completed</option>
+                          <option value="Delivered">Delivered</option>
+                          <option value="Cancelled">Cancelled</option>
                         </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                          Estimated Completion Date
+                        </label>
                         <input
-                          type="number"
-                          value={quoteAmount}
-                          onChange={(e) => setQuoteAmount(Number(e.target.value))}
-                          className="flex-1 px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-bold"
+                          type="date"
+                          value={estDateToSet}
+                          onChange={(e) => setEstDateToSet(e.target.value)}
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
                         />
                       </div>
                     </div>
+
                     <div>
-                      <label className="block text-[11px] text-slate-300 mb-1 font-semibold">Payment Link (UPI / Stripe / Custom)</label>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        Customer-Visible Notes
+                      </label>
                       <input
                         type="text"
-                        value={quotePaymentLink}
-                        onChange={(e) => setQuotePaymentLink(e.target.value)}
-                        placeholder="https://buy.stripe.com/... or upi://pay?..."
+                        value={customerNotesToSet}
+                        onChange={(e) => setCustomerNotesToSet(e.target.value)}
+                        placeholder="e.g. Scene 1 rendered. Currently rendering final shots..."
                         className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
                       />
                     </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-[11px] text-slate-300 mb-1 font-semibold">Scope & Production Breakdown</label>
-                    <textarea
-                      rows={2}
-                      value={quoteBreakdown}
-                      onChange={(e) => setQuoteBreakdown(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      onClick={handleSendCustomQuote}
-                      disabled={isSendingQuote}
-                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow-md"
-                    >
-                      {isSendingQuote ? 'Sending Quote...' : 'Send Custom Quote to Customer Email \u2192'}
-                    </button>
-
-                    <button
-                      onClick={handleConfirmPayment}
-                      className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs cursor-pointer"
-                    >
-                      Confirm Payment & Begin Production
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* VIDEO DELIVERY WORKFLOW ("Send Completed Video to Customer Email") */}
-              <div className="p-5 rounded-2xl bg-gradient-to-b from-emerald-950/40 to-slate-900 border border-emerald-800/60 mb-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Video className="w-5 h-5 text-emerald-400" />
-                    <h4 className="text-sm font-bold text-white">Upload & Send Completed Video to Customer</h4>
-                  </div>
-                  <span className="text-[11px] text-emerald-300 font-mono">
-                    Destination: {selectedRequest.customerEmail}
-                  </span>
-                </div>
-
-                <div className="space-y-3">
-                  {/* Step A: Upload Completed Video File */}
-                  <div className="p-3.5 rounded-xl bg-[#090D16] border border-slate-800">
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-2">
-                      1. Upload Completed Video File (MP4, MOV, WebM)
-                    </label>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <label className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer inline-flex items-center gap-2 shadow">
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>{isUploadingVideo ? 'Uploading Video...' : 'Upload Completed Video'}</span>
-                        <input
-                          type="file"
-                          accept="video/*,.mp4,.mov,.webm"
-                          onChange={handleUploadCompletedVideoFile}
-                          className="hidden"
-                          disabled={isUploadingVideo}
-                        />
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        Add Private Internal Note
                       </label>
-                      {uploadedVideoFilename && (
-                        <span className="text-xs text-emerald-300 font-mono flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          Uploaded: {uploadedVideoFilename}
+                      <input
+                        type="text"
+                        value={newInternalNote}
+                        onChange={(e) => setNewInternalNote(e.target.value)}
+                        placeholder="Staff notes (never shown to customer)..."
+                        className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleUpdateRequest}
+                      className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
+                    >
+                      Save Status &amp; Notes
+                    </button>
+                  </div>
+
+                  {/* CUSTOM QUOTE SECTION (ALWAYS AVAILABLE FOR VIDEO REQUESTS) */}
+                  <div className="p-5 rounded-2xl bg-gradient-to-b from-indigo-950/40 to-slate-900 border border-indigo-700/60 mb-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-indigo-400" />
+                        <span>Prepare &amp; Send Custom Video Quote</span>
+                      </h4>
+                      {selectedRequest.quote && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+                          Quote Status: {selectedRequest.quote.status.toUpperCase()}
                         </span>
                       )}
                     </div>
-                  </div>
 
-                  {/* Step B: Secure Video Download Link */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                      2. Secure Video Download Link (Auto-filled from upload or enter Cloud/Drive URL)
-                    </label>
-                    <input
-                      type="text"
-                      value={videoDeliveryUrl}
-                      onChange={(e) => setVideoDeliveryUrl(e.target.value)}
-                      placeholder="https://... or upload video file above"
-                      className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-mono"
-                    />
-                  </div>
+                    <p className="text-xs text-slate-300">
+                      The customer was informed:{' '}
+                      <strong className="text-indigo-300">&ldquo;The payment will be based on the video.&rdquo;</strong>{' '}
+                      Enter your proposed production cost and send the quote to their email.
+                    </p>
 
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                      3. Delivery Message to Customer
-                    </label>
-                    <input
-                      type="text"
-                      value={deliveryMessage}
-                      onChange={(e) => setDeliveryMessage(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
-                    />
-                  </div>
-
-                  <button
-                    onClick={handleDeliverVideo}
-                    disabled={isSendingVideo || isUploadingVideo}
-                    className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>{isSendingVideo ? 'Sending Video to Customer...' : 'Send Video to Customer'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* COMPLETE REQUEST DETAILS PREVIEW */}
-              <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 space-y-4 text-xs mb-6">
-                <h4 className="font-bold text-white text-sm border-b border-slate-800 pb-2">
-                  Complete Customer Video Request Details
-                </h4>
-
-                {/* Specifications Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-[#090D16] p-3.5 rounded-xl border border-slate-800/80">
-                  <div><span className="text-slate-400">Customer Name:</span> <strong className="text-white">{selectedRequest.customerName}</strong></div>
-                  <div><span className="text-slate-400">Customer Username:</span> <strong className="text-purple-300 font-mono">@{selectedRequest.customerUsername || selectedRequest.userId || selectedRequest.customerName}</strong></div>
-                  <div><span className="text-slate-400">Delivery Email:</span> <strong className="text-indigo-300 font-mono">{selectedRequest.customerEmail}</strong></div>
-                  <div><span className="text-slate-400">Submitted At:</span> <strong className="text-white">{new Date(selectedRequest.createdAt).toLocaleString()}</strong></div>
-                  <div><span className="text-slate-400">Category / Purpose:</span> <strong className="text-white">{selectedRequest.videoType} · {selectedRequest.purpose}</strong></div>
-                  <div><span className="text-slate-400">Visual Style:</span> <strong className="text-white">{selectedRequest.style}</strong></div>
-                  <div><span className="text-slate-400">Format & Aspect Ratio:</span> <strong className="text-white uppercase">{selectedRequest.format} ({selectedRequest.aspectRatio})</strong></div>
-                  <div><span className="text-slate-400">Duration:</span> <strong className="text-white">{selectedRequest.duration}</strong></div>
-                  <div><span className="text-slate-400">Language:</span> <strong className="text-cyan-300">{selectedRequest.language || 'English'}</strong></div>
-                  <div><span className="text-slate-400">Voice-Over & Dialogue:</span> <strong className="text-white">{selectedRequest.voiceOverPref || 'None'} / {selectedRequest.dialoguePref || 'Standard'}</strong></div>
-                  <div className="sm:col-span-2"><span className="text-slate-400">Music & Audio:</span> <strong className="text-white">{selectedRequest.backgroundMusic || 'Cinematic Ambient'} (Subtitles: {selectedRequest.subtitles ? 'Yes' : 'No'})</strong></div>
-                </div>
-
-                {selectedRequest.summary && (
-                  <div>
-                    <span className="font-bold text-indigo-400 block mb-1">Video Idea & Summary:</span>
-                    <div className="p-3 bg-[#090D16] rounded border border-slate-800 whitespace-pre-wrap text-slate-200">
-                      {selectedRequest.summary}
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <span className="font-bold text-indigo-400 block mb-1">Story & Scene Descriptions:</span>
-                  <div className="p-3 bg-[#090D16] rounded border border-slate-800 whitespace-pre-wrap text-slate-200">
-                    {selectedRequest.storyDescription || selectedRequest.summary}
-                  </div>
-                </div>
-
-                {selectedRequest.scenes && selectedRequest.scenes.length > 0 && (
-                  <div className="space-y-2">
-                    <span className="font-bold text-indigo-400">Scenes ({selectedRequest.scenes.length}):</span>
-                    {selectedRequest.scenes.map((s: any, idx: number) => (
-                      <div key={idx} className="p-3 bg-[#090D16] rounded-xl border border-slate-800 space-y-1">
-                        <strong className="text-purple-300">Scene {s.sceneNumber}: {s.location}</strong>
-                        <p className="text-slate-300">Action: {s.actions}</p>
-                        {s.dialogue && <p className="text-cyan-300">Dialogue: "{s.dialogue}"</p>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="space-y-3">
-                  <span className="font-bold text-indigo-400">Characters ({selectedRequest.characters?.length || 0}) & Uploaded Reference Photos:</span>
-                  {selectedRequest.characters?.map((c: any, i: number) => (
-                    <div key={i} className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-2">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <strong className="text-white text-sm">{c.name}</strong>
-                          <span className="text-slate-400 text-xs ml-1">({c.role || 'Character'}{c.ageRange ? `, Age ${c.ageRange}` : ''})</span>
-                        </div>
-                      </div>
-                      <p className="text-slate-300 text-xs"><strong className="text-slate-400">Appearance:</strong> {c.appearance}</p>
-                      {c.clothing && <p className="text-slate-300 text-xs"><strong className="text-slate-400">Clothing:</strong> {c.clothing}</p>}
-                      {c.actions && <p className="text-slate-300 text-xs"><strong className="text-slate-400">Actions:</strong> {c.actions}</p>}
-                      {c.dialogue && <p className="text-cyan-300 text-xs font-medium">"{c.dialogue}"</p>}
-                      {c.referencePhotoUrl && (
-                        <div className="mt-2 p-2 bg-[#090D16] rounded-lg border border-slate-800 flex items-center gap-3">
-                          <img
-                            src={c.referencePhotoUrl}
-                            alt={c.name}
-                            className="w-14 h-14 rounded object-cover border border-slate-700 shrink-0"
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                          Quote Amount (Numeric)
+                        </label>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={quoteCurrency}
+                            onChange={(e) => setQuoteCurrency(e.target.value)}
+                            className="px-2.5 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-bold"
+                          >
+                            <option value="₹">₹ (INR)</option>
+                            <option value="$">$ (USD)</option>
+                          </select>
+                          <input
+                            type="number"
+                            value={quoteAmount}
+                            onChange={(e) => setQuoteAmount(Number(e.target.value))}
+                            className="flex-1 px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-bold"
                           />
-                          <div>
-                            <span className="text-[11px] font-semibold text-slate-300 block">Uploaded Reference Photo</span>
-                            <a
-                              href={c.referencePhotoUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-cyan-400 underline text-xs font-bold inline-flex items-center gap-1 mt-0.5"
-                            >
-                              <span>Open High-Resolution Image</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          </div>
                         </div>
-                      )}
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                          Payment Link (UPI / Stripe / Custom)
+                        </label>
+                        <input
+                          type="text"
+                          value={quotePaymentLink}
+                          onChange={(e) => setQuotePaymentLink(e.target.value)}
+                          placeholder="https://buy.stripe.com/... or upi://pay?..."
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
+                        />
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                          Quote Valid Until (Optional)
+                        </label>
+                        <input
+                          type="date"
+                          value={quoteValidUntil}
+                          onChange={(e) => setQuoteValidUntil(e.target.value)}
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                          Payment Transaction Reference (When Verifying)
+                        </label>
+                        <input
+                          type="text"
+                          value={transactionRefInput}
+                          onChange={(e) => setTransactionRefInput(e.target.value)}
+                          placeholder="e.g. TXN-123456"
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                        Scope &amp; Production Breakdown
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={quoteBreakdown}
+                        onChange={(e) => setQuoteBreakdown(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={handleSendCustomQuote}
+                        disabled={isSendingQuote}
+                        className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow-md"
+                      >
+                        {isSendingQuote
+                          ? 'Sending Quote...'
+                          : 'Send Custom Quote to Customer Email →'}
+                      </button>
+
+                      <button
+                        onClick={handleConfirmPayment}
+                        className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs cursor-pointer"
+                      >
+                        Confirm Payment &amp; Begin Production
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* VIDEO DELIVERY WORKFLOW ("Send Completed Video to Customer Email") */}
+                  <div className="p-5 rounded-2xl bg-gradient-to-b from-emerald-950/40 to-slate-900 border border-emerald-800/60 mb-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Video className="w-5 h-5 text-emerald-400" />
+                        <h4 className="text-sm font-bold text-white">
+                          Upload &amp; Send Completed Video to Customer
+                        </h4>
+                      </div>
+                      <span className="text-[11px] text-emerald-300 font-mono">
+                        Destination: {selectedRequest.customerEmail}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="p-3.5 rounded-xl bg-[#090D16] border border-slate-800">
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-2">
+                          1. Upload Completed Video File (MP4, MOV, WebM)
+                        </label>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <label className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer inline-flex items-center gap-2 shadow">
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>{isUploadingVideo ? 'Uploading Video...' : 'Upload Completed Video'}</span>
+                            <input
+                              type="file"
+                              accept="video/*,.mp4,.mov,.webm"
+                              onChange={handleUploadCompletedVideoFile}
+                              className="hidden"
+                              disabled={isUploadingVideo}
+                            />
+                          </label>
+                          {uploadedVideoFilename && (
+                            <span className="text-xs text-emerald-300 font-mono flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Uploaded: {uploadedVideoFilename}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                          2. Secure Video Download Link (Auto-filled from upload or enter URL)
+                        </label>
+                        <input
+                          type="text"
+                          value={videoDeliveryUrl}
+                          onChange={(e) => setVideoDeliveryUrl(e.target.value)}
+                          placeholder="https://... or upload video file above"
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                          3. Delivery Message to Customer
+                        </label>
+                        <input
+                          type="text"
+                          value={deliveryMessage}
+                          onChange={(e) => setDeliveryMessage(e.target.value)}
+                          className="w-full px-3 py-2 bg-[#090D16] border border-slate-800 rounded-lg text-xs text-white"
+                        />
+                      </div>
+
+                      <button
+                        onClick={handleDeliverVideo}
+                        disabled={isSendingVideo || isUploadingVideo}
+                        className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <Send className="w-4 h-4" />
+                        <span>
+                          {isSendingVideo ? 'Sending Video to Customer...' : 'Send Video to Customer'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* COMPLETE REQUEST DETAILS PREVIEW */}
+                  <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 space-y-4 text-xs mb-6">
+                    <h4 className="font-bold text-white text-sm border-b border-slate-800 pb-2">
+                      Complete Customer Video Request Details
+                    </h4>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-[#090D16] p-3.5 rounded-xl border border-slate-800/80">
+                      <div>
+                        <span className="text-slate-400">Customer Name:</span>{' '}
+                        <strong className="text-white">{selectedRequest.customerName}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Customer Username:</span>{' '}
+                        <strong className="text-purple-300 font-mono">
+                          @{selectedRequest.customerUsername || selectedRequest.userId || selectedRequest.customerName}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Delivery Email:</span>{' '}
+                        <strong className="text-indigo-300 font-mono">
+                          {selectedRequest.customerEmail}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Submitted At:</span>{' '}
+                        <strong className="text-white">
+                          {new Date(selectedRequest.createdAt).toLocaleString()}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Category / Purpose:</span>{' '}
+                        <strong className="text-white">
+                          {selectedRequest.videoType} · {selectedRequest.purpose}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Visual Style:</span>{' '}
+                        <strong className="text-white">{selectedRequest.style}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Format &amp; Aspect Ratio:</span>{' '}
+                        <strong className="text-white uppercase">
+                          {selectedRequest.format} ({selectedRequest.aspectRatio})
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Duration:</span>{' '}
+                        <strong className="text-white">{selectedRequest.duration}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Language:</span>{' '}
+                        <strong className="text-cyan-300">{selectedRequest.language || 'English'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Voice-Over &amp; Dialogue:</span>{' '}
+                        <strong className="text-white">
+                          {selectedRequest.voiceOverPref || 'None'} /{' '}
+                          {selectedRequest.dialoguePref || 'Standard'}
+                        </strong>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <span className="text-slate-400">Music &amp; Audio:</span>{' '}
+                        <strong className="text-white">
+                          {selectedRequest.backgroundMusic || 'Cinematic Ambient'} (Subtitles:{' '}
+                          {selectedRequest.subtitles ? 'Yes' : 'No'})
+                        </strong>
+                      </div>
+                    </div>
+
+                    {selectedRequest.summary && (
+                      <div>
+                        <span className="font-bold text-indigo-400 block mb-1">
+                          Video Idea &amp; Summary:
+                        </span>
+                        <div className="p-3 bg-[#090D16] rounded border border-slate-800 whitespace-pre-wrap text-slate-200">
+                          {selectedRequest.summary}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <span className="font-bold text-indigo-400 block mb-1">
+                        Story &amp; Scene Descriptions:
+                      </span>
+                      <div className="p-3 bg-[#090D16] rounded border border-slate-800 whitespace-pre-wrap text-slate-200">
+                        {selectedRequest.storyDescription || selectedRequest.summary}
+                      </div>
+                    </div>
+
+                    {selectedRequest.scenes && selectedRequest.scenes.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="font-bold text-indigo-400">
+                          Scenes ({selectedRequest.scenes.length}):
+                        </span>
+                        {selectedRequest.scenes.map((s: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="p-3 bg-[#090D16] rounded-xl border border-slate-800 space-y-1"
+                          >
+                            <strong className="text-purple-300">
+                              Scene {s.sceneNumber}: {s.location}
+                            </strong>
+                            <p className="text-slate-300">Action: {s.actions}</p>
+                            {s.dialogue && <p className="text-cyan-300">Dialogue: &ldquo;{s.dialogue}&rdquo;</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <span className="font-bold text-indigo-400">
+                        Characters ({selectedRequest.characters?.length || 0}) &amp; Uploaded Reference Photos:
+                      </span>
+                      {selectedRequest.characters?.map((c: any, i: number) => (
+                        <div
+                          key={i}
+                          className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-2"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <strong className="text-white text-sm">{c.name}</strong>
+                              <span className="text-slate-400 text-xs ml-1">
+                                ({c.role || 'Character'}
+                                {c.ageRange ? `, Age ${c.ageRange}` : ''})
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-slate-300 text-xs">
+                            <strong className="text-slate-400">Appearance:</strong> {c.appearance}
+                          </p>
+                          {c.clothing && (
+                            <p className="text-slate-300 text-xs">
+                              <strong className="text-slate-400">Clothing:</strong> {c.clothing}
+                            </p>
+                          )}
+                          {c.actions && (
+                            <p className="text-slate-300 text-xs">
+                              <strong className="text-slate-400">Actions:</strong> {c.actions}
+                            </p>
+                          )}
+                          {c.dialogue && (
+                            <p className="text-cyan-300 text-xs font-medium">&ldquo;{c.dialogue}&rdquo;</p>
+                          )}
+                          {c.referencePhotoUrl && (
+                            <div className="mt-2 p-2 bg-[#090D16] rounded-lg border border-slate-800 flex items-center gap-3">
+                              <img
+                                src={c.referencePhotoUrl}
+                                alt={c.name}
+                                className="w-14 h-14 rounded object-cover border border-slate-700 shrink-0"
+                              />
+                              <div>
+                                <span className="text-[11px] font-semibold text-slate-300 block">
+                                  Uploaded Reference Photo
+                                </span>
+                                <a
+                                  href={c.referencePhotoUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-cyan-400 underline text-xs font-bold inline-flex items-center gap-1 mt-0.5"
+                                >
+                                  <span>Open High-Resolution Image</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* DETAIL DRAWER FOR BUDGET REQUESTS */}
+      {/* DETAIL DRAWER FOR CUSTOM INQUIRIES */}
       {selectedBudgetRequest && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
           <div className="w-full max-w-2xl h-full bg-[#090D16] border-l border-slate-800 p-6 overflow-y-auto space-y-6 animate-fadeIn">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div>
-                <span className="font-mono text-cyan-400 font-bold text-xs">{selectedBudgetRequest.id}</span>
+                <span className="font-mono text-cyan-400 font-bold text-xs">
+                  {selectedBudgetRequest.id}
+                </span>
                 <h3 className="text-lg font-bold text-white">{selectedBudgetRequest.fullName}</h3>
                 <p className="text-xs text-slate-400">{selectedBudgetRequest.email}</p>
               </div>
-              <button onClick={() => setSelectedBudgetRequest(null)} className="p-2 rounded bg-slate-800 text-white">
+              <button
+                onClick={() => setSelectedBudgetRequest(null)}
+                className="p-2 rounded bg-slate-800 text-white cursor-pointer"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -2267,25 +2587,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <div className="p-4 rounded bg-[#0C1220] border border-slate-800 space-y-2 text-xs">
               <span className="text-indigo-400 font-bold">Video Idea:</span>
               <p className="text-white whitespace-pre-wrap">{selectedBudgetRequest.videoIdea}</p>
-              <div className="pt-2 flex gap-4 text-slate-300">
-                <span>Budget: <strong className="text-emerald-400">{selectedBudgetRequest.budgetCategory} ({selectedBudgetRequest.budgetAmount})</strong></span>
-                <span>Type: <strong>{selectedBudgetRequest.preferredVideoType}</strong></span>
+              <div className="pt-2 flex flex-wrap gap-4 text-slate-300">
+                <span>
+                  Pricing Note:{' '}
+                  <strong className="text-indigo-300">{selectedBudgetRequest.budgetAmount}</strong>
+                </span>
+                <span>
+                  Type: <strong>{selectedBudgetRequest.preferredVideoType}</strong>
+                </span>
               </div>
             </div>
 
             <div className="space-y-3">
-              <label className="block text-xs font-semibold text-slate-300">Reply to Customer via Email</label>
+              <label className="block text-xs font-semibold text-slate-300">
+                Reply to Customer via Email
+              </label>
               <textarea
                 rows={3}
                 value={budgetReplyMessage}
                 onChange={(e) => setBudgetReplyMessage(e.target.value)}
-                placeholder="Type your reply message..."
+                placeholder="Type your reply message or proposed quote..."
                 className="w-full p-3 rounded-xl bg-[#0C1220] border border-slate-800 text-xs text-white"
               />
               <button
                 onClick={handleSendBudgetReply}
                 disabled={isSendingBudgetReply}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs"
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
               >
                 {isSendingBudgetReply ? 'Sending...' : 'Send Reply Email'}
               </button>
@@ -2305,7 +2632,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                 </span>
                 <h3 className="text-base font-bold text-white mt-0.5">{previewEmailLog.subject}</h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Recipient: <strong className="text-indigo-300 font-mono">{previewEmailLog.recipient}</strong> &bull; {new Date(previewEmailLog.sentAt).toLocaleString()}
+                  Recipient:{' '}
+                  <strong className="text-indigo-300 font-mono">{previewEmailLog.recipient}</strong> &bull;{' '}
+                  {new Date(previewEmailLog.sentAt).toLocaleString()}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -2314,7 +2643,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                   disabled={retryingLogId === previewEmailLog.id}
                   className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
                 >
-                  <RotateCcw className={`w-3.5 h-3.5 ${retryingLogId === previewEmailLog.id ? 'animate-spin' : ''}`} />
+                  <RotateCcw
+                    className={`w-3.5 h-3.5 ${retryingLogId === previewEmailLog.id ? 'animate-spin' : ''}`}
+                  />
                   <span>Retry Dispatch</span>
                 </button>
                 <button

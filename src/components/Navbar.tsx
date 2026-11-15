@@ -6,13 +6,12 @@ import {
   Menu,
   X,
   Clock,
-  HelpCircle,
-  Mail,
-  Gift,
   LogOut,
   User as UserIcon,
-  ChevronDown
+  ChevronDown,
+  Download
 } from 'lucide-react';
+import { isRunningInElectron } from '../services/desktopBridge.ts';
 
 interface NavbarProps {
   currentUser: UserAccount | null;
@@ -21,9 +20,9 @@ interface NavbarProps {
   onTrackClick: () => void;
   onMyRequestsClick: () => void;
   onProfileClick?: () => void;
-  onAdminClick: () => void;
   onContactClick: () => void;
   onBudgetContactClick: () => void;
+  onDownloadAppClick?: () => void;
   onSignInClick: () => void;
   onSignOutClick: () => void;
 }
@@ -32,12 +31,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onNavigate,
   onRequestClick,
-  onTrackClick,
   onMyRequestsClick,
   onProfileClick,
-  onAdminClick,
-  onContactClick,
   onBudgetContactClick,
+  onDownloadAppClick,
   onSignInClick,
   onSignOutClick
 }) => {
@@ -48,8 +45,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     onNavigate(id);
     setMobileMenuOpen(false);
   };
-
-  const isTrialEligible = currentUser?.trialStatus === 'eligible';
 
   return (
     <header className="sticky top-0 z-50 w-full bg-[#050811]/90 backdrop-blur-md border-b border-slate-800/80">
@@ -96,7 +91,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="flex items-center gap-1.5 text-cyan-300 hover:text-white transition-colors cursor-pointer py-1 font-semibold"
           >
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Contact & Budget</span>
+            <span>Contact &amp; Budget</span>
           </button>
           <button
             onClick={() => handleNav('faq')}
@@ -104,6 +99,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             FAQ
           </button>
+          {onDownloadAppClick && !isRunningInElectron() && (
+            <button
+              onClick={onDownloadAppClick}
+              className="flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition-colors cursor-pointer py-1 font-semibold whitespace-nowrap shrink-0"
+            >
+              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <span>DOWNLOAD OUR APP</span>
+            </button>
+          )}
         </nav>
 
         {/* Right CTA / Profile */}
@@ -115,30 +119,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onClick={() => setUserDropdownOpen(!userDropdownOpen)}
                 className="flex items-center gap-2.5 p-1.5 pr-3 rounded-full bg-[#0D1322] border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
               >
-                {currentUser.photoURL ? (
-                  <img
-                    src={currentUser.photoURL}
-                    alt={currentUser.displayName}
-                    className="w-7 h-7 rounded-full object-cover border border-indigo-500/50"
-                  />
-                ) : (
-                  <div className="w-7 h-7 rounded-full bg-indigo-900/60 text-indigo-300 flex items-center justify-center font-bold text-xs">
-                    {currentUser.displayName?.[0] || 'U'}
-                  </div>
-                )}
-                <div className="text-left hidden xl:block leading-tight max-w-[130px] truncate">
+                <div className="w-7 h-7 rounded-full bg-indigo-900/60 text-indigo-300 flex items-center justify-center font-bold text-xs">
+                  {(currentUser.username || currentUser.displayName || 'U')[0].toUpperCase()}
+                </div>
+                <div className="text-left hidden xl:block leading-tight max-w-[140px] truncate">
                   <span className="text-xs font-bold text-white block truncate">
-                    {currentUser.displayName}
+                    {currentUser.displayName || currentUser.username}
                   </span>
-                  <span className="text-[10px] text-slate-400 block truncate">
-                    {currentUser.email}
+                  <span className="text-[10px] text-slate-400 block truncate font-mono">
+                    @{currentUser.username}
                   </span>
                 </div>
-                {isTrialEligible && (
-                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-950 text-emerald-300 border border-emerald-700/60">
-                    <Gift className="w-2.5 h-2.5" /> 1 Free
-                  </span>
-                )}
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
               </button>
 
@@ -146,17 +137,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               {userDropdownOpen && (
                 <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-[#090D16] border border-slate-800 shadow-2xl p-2 z-50 text-xs animate-fadeIn">
                   <div className="p-3 border-b border-slate-800 mb-1">
-                    <p className="font-bold text-white text-sm truncate">{currentUser.displayName}</p>
-                    <p className="text-slate-400 font-mono text-[11px] truncate mt-0.5">{currentUser.email}</p>
+                    <p className="font-bold text-white text-sm truncate">
+                      {currentUser.displayName || currentUser.username}
+                    </p>
+                    <p className="text-slate-400 font-mono text-[11px] truncate mt-0.5">
+                      @{currentUser.username}
+                    </p>
                     <div className="mt-2">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          isTrialEligible
-                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
-                            : 'bg-slate-800 text-slate-300'
-                        }`}
-                      >
-                        {isTrialEligible ? '🎁 1 Free Trial Available' : '⚡ Standard Account'}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-950/70 text-indigo-300 border border-indigo-800/60">
+                        Customer Account
                       </span>
                     </div>
                   </div>
@@ -196,17 +185,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <span>Create AI Video</span>
                   </button>
 
-                  <button
-                    onClick={() => {
-                      setUserDropdownOpen(false);
-                      onAdminClick();
-                    }}
-                    className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 text-left text-slate-400 hover:text-white flex items-center gap-2 font-medium cursor-pointer"
-                  >
-                    <UserIcon className="w-4 h-4 text-slate-400" />
-                    <span>Studio Admin</span>
-                  </button>
-
                   <div className="pt-1 mt-1 border-t border-slate-800">
                     <button
                       onClick={() => {
@@ -225,13 +203,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           ) : (
             <button
               onClick={onSignInClick}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-indigo-500/60 flex items-center gap-2 transition-all shadow-md shadow-black/40 cursor-pointer group"
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-indigo-500/60 flex items-center gap-2 transition-all shadow-md shadow-black/40 cursor-pointer"
             >
               <UserIcon className="w-4 h-4 text-cyan-400" />
-              <span>User Sign In</span>
-              <span className="hidden xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-700/60">
-                1 Free
-              </span>
+              <span>Log In</span>
             </button>
           )}
 
@@ -247,11 +222,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Mobile Hamburger */}
         <div className="flex md:hidden items-center gap-2">
-          {currentUser && isTrialEligible && (
-            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-emerald-950 text-emerald-300 border border-emerald-700/60">
-              1 Free
-            </span>
-          )}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 rounded-lg bg-slate-800/80 text-slate-300 hover:text-white"
@@ -264,13 +234,15 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="md:hidden bg-[#070B14] border-b border-slate-800 px-4 pt-3 pb-6 space-y-3 animate-fadeIn">
-          {currentUser ? (
+          {currentUser && (
             <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 mb-2">
-              <p className="font-bold text-white text-sm">{currentUser.displayName}</p>
-              <p className="text-slate-400 text-xs font-mono">{currentUser.email}</p>
+              <p className="font-bold text-white text-sm">
+                {currentUser.displayName || currentUser.username}
+              </p>
+              <p className="text-slate-400 text-xs font-mono">@{currentUser.username}</p>
               <div className="mt-2 flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-emerald-400">
-                  {isTrialEligible ? '🎁 1 Free Trial Available' : '⚡ Standard Account'}
+                <span className="text-[10px] font-bold uppercase text-indigo-300">
+                  Customer Account
                 </span>
                 <button
                   onClick={() => {
@@ -283,17 +255,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               </div>
             </div>
-          ) : (
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onSignInClick();
-              }}
-              className="w-full py-3 rounded-xl text-xs font-bold text-slate-900 bg-white flex items-center justify-center gap-2"
-            >
-              <UserIcon className="w-4 h-4 text-indigo-600" />
-              <span>User Sign In</span>
-            </button>
           )}
 
           <button
@@ -332,7 +293,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             }}
             className="w-full text-left py-2 text-sm text-cyan-300 font-semibold hover:text-white"
           >
-            Contact & Video Budget
+            Contact &amp; Video Budget
           </button>
           <button
             onClick={() => handleNav('faq')}
@@ -340,6 +301,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             FAQ
           </button>
+          {onDownloadAppClick && !isRunningInElectron() && (
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onDownloadAppClick();
+              }}
+              className="w-full text-left py-2 text-sm text-amber-300 font-semibold hover:text-amber-200 flex items-center gap-2"
+            >
+              <Download className="w-4 h-4 text-amber-400" />
+              <span>DOWNLOAD OUR APP</span>
+            </button>
+          )}
 
           <div className="pt-2">
             <button

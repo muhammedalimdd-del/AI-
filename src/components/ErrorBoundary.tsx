@@ -59,7 +59,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 Application Notice
               </h1>
               <p className="text-sm text-slate-300 leading-relaxed mb-6">
-                ZENVORA encountered an unexpected issue while rendering this view.
+                AI TIMES encountered an unexpected issue while rendering this view.
                 You can reload the application or reset your session below.
               </p>
 

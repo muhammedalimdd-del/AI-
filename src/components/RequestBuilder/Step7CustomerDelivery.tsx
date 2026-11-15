@@ -67,7 +67,7 @@ export const Step7CustomerDelivery: React.FC<Step7Props> = ({
           />
           {currentUser?.username && (
             <p className="text-[11px] text-slate-500 mt-1">
-              Signed in as device account: <span className="text-indigo-400 font-mono">@{currentUser.username}</span>
+              Signed in as customer account: <span className="text-indigo-400 font-mono">@{currentUser.username}</span>
             </p>
           )}
         </div>
@@ -139,7 +139,7 @@ export const Step7CustomerDelivery: React.FC<Step7Props> = ({
               >
                 Privacy Policy
               </button>
-              . I understand that ZENVORA is a human-curated video creation service where requests are reviewed, produced with AI video creation tools, and delivered to my chosen delivery email address.
+              . I understand that AI TIMES is a human-curated video creation service where requests are reviewed, produced with AI video creation tools, and delivered to my chosen delivery email address. The payment will be based on the video.
             </span>
           </label>
         </div>

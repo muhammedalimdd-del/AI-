@@ -1,4 +1,5 @@
-import { Sparkles, ArrowRight, Film, ShieldCheck, Gift, CreditCard, Video, User, Clock } from 'lucide-react';
+import React from 'react';
+import { Sparkles, ArrowRight, Film, ShieldCheck, CreditCard, User, Clock } from 'lucide-react';
 import { UserAccount } from '../types/client.ts';
 
 interface HeroSectionProps {
@@ -85,12 +86,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               ) : (
                 <User className="w-3.5 h-3.5 text-indigo-400" />
               )}
-              <span>Welcome back, <strong className="text-white">{currentUser.displayName || 'Creator'}</strong></span>
-              {currentUser.trialStatus === 'eligible' && (
-                <span className="ml-1 px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 text-[10px] font-extrabold uppercase border border-emerald-700/50">
-                  🎁 1 Free Trial
-                </span>
-              )}
+              <span>Welcome back, <strong className="text-white">{currentUser.displayName || currentUser.username || 'Creator'}</strong></span>
             </div>
           )}
 
@@ -166,16 +162,12 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           {/* Trust points */}
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-slate-400 pb-12">
             <div className="flex items-center gap-1.5">
-              <Gift className="w-4 h-4 text-emerald-400" />
-              <span>1-Time Free Trial for Eligible New Accounts</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <CreditCard className="w-4 h-4 text-indigo-400" />
-              <span>The payment will be based on the video</span>
+              <CreditCard className="w-4 h-4 text-amber-400" />
+              <span>The payment will be based on the video.</span>
             </div>
             <div className="flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-cyan-400" />
-              <span>Verified Google Account Delivery</span>
+              <span>Direct Completed Video Email Delivery</span>
             </div>
           </div>
         </div>

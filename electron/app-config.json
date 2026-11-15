@@ -1,0 +1,8 @@
+{
+  "primaryUrl": "https://ais-dev-eval4556daji7ihjgwnfzr-589743996180.asia-northeast1.run.app",
+  "fallbackUrls": [
+    "https://ais-dev-eval4556daji7ihjgwnfzr-589743996180.asia-northeast1.run.app",
+    "https://ais-pre-eval4556daji7ihjgwnfzr-589743996180.asia-northeast1.run.app",
+    "http://localhost:3000"
+  ]
+}

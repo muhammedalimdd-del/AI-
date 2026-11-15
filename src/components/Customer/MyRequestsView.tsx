@@ -2,21 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { VideoRequestClient, UserAccount } from '../../types/client.ts';
 import {
   Film,
-  Clock,
   CheckCircle,
   AlertCircle,
-  ExternalLink,
   ChevronDown,
   ChevronUp,
-  Gift,
   CreditCard,
   Download,
-  Play,
   RefreshCw,
-  ArrowLeft
+  ArrowLeft,
+  ShieldCheck
 } from 'lucide-react';
-import { getVideoRequestsForUser, subscribeToUserRequests } from '../../services/firestoreService.ts';
 import { safeFetchJson } from '../../services/apiClient.ts';
+import { getAuthHeaders } from '../../services/deviceIdentity.ts';
 
 interface MyRequestsViewProps {
   currentUser: UserAccount;
@@ -34,74 +31,28 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const fetchUserRequests = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const requestMap = new Map<string, VideoRequestClient>();
-
-      // 1. Fetch from backend API strictly for this user's UID / username
-      try {
-        const queryParams = new URLSearchParams({
-          uid: currentUser.uid || '',
-          username: currentUser.username || '',
-          email: currentUser.email || ''
-        });
-        const result = await safeFetchJson<{ requests?: VideoRequestClient[] }>(
-          `/api/user/requests?${queryParams.toString()}`
-        );
-        if (result.ok && Array.isArray(result.data?.requests)) {
-          for (const item of result.data.requests) {
-            requestMap.set(item.id, item);
-          }
+      const result = await safeFetchJson<{ requests?: VideoRequestClient[]; error?: string }>(
+        '/api/user/requests',
+        {
+          headers: getAuthHeaders()
         }
-      } catch (netErr) {
-        // Fallback for offline/static hosting
+      );
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || result.error || 'Unable to load your video requests.');
       }
 
-      // 2. Also load from Firestore database strictly for currentUser.uid
-      if (currentUser.uid) {
-        try {
-          const fsItems = await getVideoRequestsForUser(currentUser.uid);
-          if (Array.isArray(fsItems)) {
-            for (const item of fsItems) {
-              if (!requestMap.has(item.id)) {
-                requestMap.set(item.id, {
-                  ...item,
-                  characters: Array.isArray(item.characters) ? item.characters : [],
-                  format: item.format || 'portrait',
-                  aspectRatio: item.aspectRatio || '9:16',
-                  duration: item.duration || '30 seconds'
-                });
-              }
-            }
-          }
-        } catch (fsErr) {
-          console.warn('Notice: Reading from Firestore:', fsErr);
-        }
-      }
-
-      // 3. Fallback: Read local storage strictly matching currentUser.uid
-      if (requestMap.size === 0) {
-        try {
-          const localRequests: VideoRequestClient[] = JSON.parse(
-            localStorage.getItem('zenvora_local_requests') || '[]'
-          );
-          for (const r of localRequests) {
-            if (currentUser.uid && (r as any).userId === currentUser.uid) {
-              requestMap.set(r.id, r);
-            }
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-
-      const merged = Array.from(requestMap.values()).sort(
+      const items = Array.isArray(result.data?.requests) ? result.data.requests : [];
+      const sorted = [...items].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
-      setRequests(merged);
+      setRequests(sorted);
     } catch (e: any) {
       setError(e.message || 'Network error fetching requests.');
     } finally {
@@ -111,58 +62,34 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
 
   useEffect(() => {
     fetchUserRequests();
-
-    // Setup real-time listener if user is authenticated with Firestore
-    if (currentUser.uid) {
-      try {
-        const unsubscribe = subscribeToUserRequests(currentUser.uid, (firestoreRequests) => {
-          if (firestoreRequests && firestoreRequests.length > 0) {
-            setRequests((prev) => {
-              const map = new Map<string, VideoRequestClient>();
-              for (const item of prev) map.set(item.id, item);
-              for (const fsItem of firestoreRequests) {
-                if (!map.has(fsItem.id)) {
-                  map.set(fsItem.id, {
-                    ...fsItem,
-                    characters: Array.isArray(fsItem.characters) ? fsItem.characters : [],
-                    format: fsItem.format || 'portrait',
-                    aspectRatio: fsItem.aspectRatio || '9:16',
-                    duration: fsItem.duration || '30 seconds'
-                  });
-                }
-              }
-              return Array.from(map.values()).sort(
-                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-              );
-            });
-            setIsLoading(false);
-          }
-        });
-        return () => {
-          unsubscribe();
-        };
-      } catch (subErr) {
-        console.warn('Notice: Realtime Firestore subscription:', subErr);
-      }
-    }
-  }, [currentUser]);
+  }, [currentUser.uid]);
 
   const handleQuoteDecision = async (requestId: string, action: 'accept' | 'decline') => {
     setActionLoadingId(requestId);
+    setError(null);
+    setActionNotice(null);
     try {
       const result = await safeFetchJson<{ error?: string }>(`/api/requests/${requestId}/quote-action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, customerEmail: currentUser.email })
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          action,
+          customerEmail: currentUser.email || undefined
+        })
       });
 
       if (result.ok) {
+        setActionNotice(
+          action === 'accept'
+            ? `Quote accepted for ${requestId}. Our production team will proceed shortly.`
+            : `Quote declined for ${requestId}.`
+        );
         await fetchUserRequests();
       } else {
-        alert(result.data?.error || result.error || 'Failed to submit quote decision.');
+        setError(result.data?.error || result.error || 'Failed to submit quote decision.');
       }
     } catch (e: any) {
-      alert(e.message || 'Network error.');
+      setError(e.message || 'Network error.');
     } finally {
       setActionLoadingId(null);
     }
@@ -185,7 +112,11 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
             <span>My AI Video Requests</span>
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Tracking videos requested for <strong className="text-slate-200">{currentUser.email}</strong>
+            Private request history for{' '}
+            <strong className="text-indigo-300 font-mono">@{currentUser.username}</strong>
+            {currentUser.email && !currentUser.email.endsWith('@aivideomaker.local')
+              ? ` (${currentUser.email})`
+              : ''}
           </p>
         </div>
 
@@ -208,39 +139,28 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
         </div>
       </div>
 
-      {/* Trial Status Summary Card */}
+      {/* Pricing & Review Summary Banner */}
       <div className="p-5 rounded-2xl bg-[#0B101D] border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div
-            className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-              currentUser.trialStatus === 'eligible'
-                ? 'bg-emerald-950/80 border border-emerald-700/60 text-emerald-400'
-                : 'bg-indigo-950/80 border border-indigo-700/60 text-indigo-400'
-            }`}
-          >
-            <Gift className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-indigo-950/80 border border-indigo-700/60 text-indigo-400">
+            <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-white">Free Trial Status</h3>
-              <span
-                className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                  currentUser.trialStatus === 'eligible'
-                    ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/60'
-                    : 'bg-slate-800 text-slate-300'
-                }`}
-              >
-                {currentUser.trialStatus === 'eligible' ? '1 Free Request Available' : 'Trial Used'}
-              </span>
-            </div>
+            <h3 className="text-sm font-bold text-white">Custom Video Pricing &amp; Review</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              {currentUser.trialStatus === 'eligible'
-                ? 'You are eligible to submit your first custom AI video for free!'
-                : 'Your one-time free trial has been used. Subsequent requests follow our video-based quote workflow.'}
+              The payment will be based on the video. Our studio reviews every brief individually and sends a tailored quote before paid production begins.
             </p>
           </div>
         </div>
       </div>
+
+      {/* Status Notices */}
+      {actionNotice && (
+        <div className="p-4 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs flex items-center gap-2.5">
+          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{actionNotice}</span>
+        </div>
+      )}
 
       {/* Loading & Error States */}
       {isLoading && requests.length === 0 && (
@@ -258,7 +178,7 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
       )}
 
       {/* Empty State */}
-      {!isLoading && requests.length === 0 && (
+      {!isLoading && requests.length === 0 && !error && (
         <div className="text-center py-20 border border-dashed border-slate-800 rounded-3xl p-8 space-y-5 bg-[#0B101D]/40">
           <div className="w-16 h-16 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center mx-auto text-indigo-400">
             <Film className="w-8 h-8" />
@@ -266,7 +186,7 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
           <div className="space-y-1.5 max-w-md mx-auto">
             <h3 className="text-lg font-bold text-white">No Video Requests Yet</h3>
             <p className="text-xs text-slate-400">
-              You haven't requested any custom AI videos yet. Describe your story idea, characters, and scenes to get started!
+              You haven&apos;t requested any custom AI videos yet. Describe your story idea, characters, and scenes to get started!
             </p>
           </div>
           <button
@@ -282,7 +202,6 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
       <div className="space-y-4">
         {requests.map((req) => {
           const isExpanded = expandedId === req.id;
-          const isTrial = req.requestType === 'free_trial';
 
           return (
             <div
@@ -299,15 +218,9 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
                     <span className="font-mono text-xs font-bold text-indigo-400 bg-indigo-950/70 border border-indigo-800/60 px-2.5 py-0.5 rounded-md">
                       {req.id}
                     </span>
-                    <span
-                      className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
-                        isTrial
-                          ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/60'
-                          : 'bg-indigo-950/80 text-indigo-300 border border-indigo-700/60'
-                      }`}
-                    >
-                      {isTrial ? <Gift className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                      <span>{isTrial ? 'Free Trial' : 'Paid Request'}</span>
+                    <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 bg-indigo-950/80 text-indigo-300 border border-indigo-700/60">
+                      <CreditCard className="w-3 h-3" />
+                      <span>Paid Request</span>
                     </span>
 
                     <span
@@ -329,6 +242,11 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
 
                   <p className="text-xs text-slate-400">
                     Style: <strong className="text-slate-300">{req.style}</strong> · {req.format.toUpperCase()} ({req.aspectRatio}) · Duration: {req.duration} · Submitted: {new Date(req.createdAt).toLocaleDateString()}
+                  </p>
+                  <p className="text-[11px] text-indigo-300/90 font-medium">
+                    {req.quote?.formattedAmount
+                      ? `Proposed Quote: ${req.quote.formattedAmount}`
+                      : req.pricingMessage || 'The payment will be based on the video.'}
                   </p>
                 </div>
 
@@ -431,7 +349,7 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                     <div className="p-4 rounded-xl bg-[#0B101D] border border-slate-800 space-y-2">
                       <span className="font-bold text-indigo-400 uppercase tracking-wider text-[11px]">
-                        Story & Concept
+                        Story &amp; Concept
                       </span>
                       <p className="text-slate-300 whitespace-pre-wrap leading-relaxed">
                         {req.storyDescription || 'No narrative description provided.'}
@@ -440,9 +358,9 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
 
                     <div className="p-4 rounded-xl bg-[#0B101D] border border-slate-800 space-y-2">
                       <span className="font-bold text-indigo-400 uppercase tracking-wider text-[11px]">
-                        Characters ({req.characters.length})
+                        Characters ({req.characters?.length || 0})
                       </span>
-                      {req.characters.length > 0 ? (
+                      {req.characters && req.characters.length > 0 ? (
                         <div className="space-y-2">
                           {req.characters.map((c) => (
                             <div key={c.id} className="p-2 rounded bg-slate-900 border border-slate-800">

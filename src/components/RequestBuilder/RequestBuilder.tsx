@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RequestFormData, CharacterItem, UserAccount } from '../../types/client.ts';
+import { RequestFormData, UserAccount } from '../../types/client.ts';
 import { Step1Basic } from './Step1Basic.tsx';
 import { Step2Style } from './Step2Style.tsx';
 import { Step3Format } from './Step3Format.tsx';
@@ -9,8 +9,8 @@ import { Step6DurationQuality } from './Step6DurationQuality.tsx';
 import { Step7CustomerDelivery } from './Step7CustomerDelivery.tsx';
 import { Step8ReviewSubmit } from './Step8ReviewSubmit.tsx';
 import { ArrowLeft, ArrowRight, RotateCcw, AlertCircle } from 'lucide-react';
-import { saveVideoRequestToFirestore } from '../../services/firestoreService.ts';
 import { safeFetchJson } from '../../services/apiClient.ts';
+import { getAuthHeaders } from '../../services/deviceIdentity.ts';
 
 interface RequestBuilderProps {
   initialStyle?: string;
@@ -20,10 +20,10 @@ interface RequestBuilderProps {
   currentUser?: UserAccount | null;
 }
 
-const STORAGE_KEY = 'zenvora_draft_v1';
+const STORAGE_KEY = 'aitimes_draft_v2';
 
 const DEFAULT_FORM_DATA: RequestFormData = {
-  requestType: 'free_trial',
+  requestType: 'paid',
   title: '',
   videoType: 'Cinematic Story / Viral Short',
   purpose: 'Entertainment',
@@ -92,7 +92,7 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
       if (saved) {
         const parsed = JSON.parse(saved);
         if (initialStyle) parsed.style = initialStyle;
-        return { ...DEFAULT_FORM_DATA, ...parsed };
+        return { ...DEFAULT_FORM_DATA, ...parsed, requestType: 'paid' };
       }
     } catch (e) {
       console.warn('Could not read autosaved draft', e);
@@ -103,8 +103,9 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState<boolean>(false);
 
-  // Sync authenticated user into form data without overwriting customer's chosen delivery email with local device placeholder
+  // Sync authenticated user into form data without overwriting customer's chosen delivery email with local placeholder
   useEffect(() => {
     if (currentUser) {
       const isLocalDeviceEmail = currentUser.email?.toLowerCase().endsWith('@aivideomaker.local');
@@ -112,11 +113,12 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
         const prevCleanEmail = prev.customerEmail?.toLowerCase().endsWith('@aivideomaker.local')
           ? ''
           : prev.customerEmail;
-        const fallbackEmail = !isLocalDeviceEmail ? (currentUser.email || '') : '';
+        const fallbackEmail = !isLocalDeviceEmail ? currentUser.email || '' : '';
         const chosenEmail = prevCleanEmail || fallbackEmail;
 
         return {
           ...prev,
+          requestType: 'paid',
           userId: currentUser.uid,
           userEmail: currentUser.email,
           customerUsername: currentUser.username || currentUser.displayName,
@@ -132,7 +134,7 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
-    } catch (e) {
+    } catch {
       // ignore
     }
   }, [formData]);
@@ -145,7 +147,7 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
   }, [initialStyle]);
 
   const updateData = (fields: Partial<RequestFormData>) => {
-    setFormData((prev) => ({ ...prev, ...fields }));
+    setFormData((prev) => ({ ...prev, ...fields, requestType: 'paid' }));
     setValidationError(null);
     setSubmitError(null);
   };
@@ -176,7 +178,9 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
         return false;
       }
       if (!isValidDeliveryEmail(formData.customerEmail)) {
-        setValidationError('Please enter a valid Email Address for Video Delivery (e.g. yourname@gmail.com).');
+        setValidationError(
+          'Please enter a valid Email Address for Video Delivery (e.g. yourname@gmail.com).'
+        );
         return false;
       }
       if (!formData.purpose.trim()) {
@@ -237,24 +241,28 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
   };
 
   const handleResetDraft = () => {
-    if (window.confirm('Reset all fields in this video request draft?')) {
-      localStorage.removeItem(STORAGE_KEY);
-      const isLocalDeviceEmail = currentUser?.email?.toLowerCase().endsWith('@aivideomaker.local');
-      const defaultEmail = !isLocalDeviceEmail ? (currentUser?.email || '') : '';
-      setFormData({
-        ...DEFAULT_FORM_DATA,
-        customerEmail: defaultEmail,
-        confirmEmail: defaultEmail,
-        customerUsername: currentUser?.username || currentUser?.displayName || '',
-        customerName: currentUser?.displayName || currentUser?.username || ''
-      });
-      setCurrentStep(1);
-      setValidationError(null);
+    if (!confirmReset) {
+      setConfirmReset(true);
+      setTimeout(() => setConfirmReset(false), 4000);
+      return;
     }
+    localStorage.removeItem(STORAGE_KEY);
+    const isLocalDeviceEmail = currentUser?.email?.toLowerCase().endsWith('@aivideomaker.local');
+    const defaultEmail = !isLocalDeviceEmail ? currentUser?.email || '' : '';
+    setFormData({
+      ...DEFAULT_FORM_DATA,
+      customerEmail: defaultEmail,
+      confirmEmail: defaultEmail,
+      customerUsername: currentUser?.username || currentUser?.displayName || '',
+      customerName: currentUser?.displayName || currentUser?.username || ''
+    });
+    setCurrentStep(1);
+    setValidationError(null);
+    setConfirmReset(false);
   };
 
-  // Submit to server with trial vs paid plan
-  const handleSubmit = async (planType: 'free_trial' | 'paid') => {
+  // Submit paid video request to authenticated backend API
+  const handleSubmit = async () => {
     if (isSubmitting) return;
 
     for (let s = 1; s <= 7; s++) {
@@ -281,9 +289,7 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
 
     const submissionPayload = {
       ...formData,
-      requestType: planType,
-      userId: currentUser?.uid,
-      userEmail: currentUser?.email || deliveryEmail,
+      requestType: 'paid' as const,
       customerUsername,
       customerName: formData.customerName.trim(),
       customerEmail: deliveryEmail,
@@ -291,93 +297,37 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
     };
 
     try {
-      let result: any = null;
-      let usedStaticFallback = false;
+      const fetchResult = await safeFetchJson<{
+        request?: any;
+        emailNotification?: any;
+        message?: string;
+        error?: string;
+      }>('/api/requests', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(submissionPayload)
+      });
 
-      try {
-        const fetchResult = await safeFetchJson<{
-          request?: any;
-          emailNotification?: any;
-          message?: string;
-          error?: string;
-        }>('/api/requests', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(submissionPayload)
-        });
-
-        if (fetchResult.ok && fetchResult.data?.request) {
-          result = fetchResult.data;
-        } else if (fetchResult.data?.error) {
-          throw new Error(fetchResult.data.error);
-        } else {
-          usedStaticFallback = true;
-        }
-      } catch (netErr: any) {
-        if (netErr.message && !netErr.message.includes('fetch') && !netErr.message.includes('Network')) {
-          throw netErr;
-        }
-        usedStaticFallback = true;
-      }
-
-      if (usedStaticFallback || !result?.request) {
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        const reqId = `VR-2026-${randomNum}`;
-        const accessToken = `sec_${Math.random().toString(36).substring(2, 12)}`;
-        const fallbackRequest = {
-          id: reqId,
-          accessToken,
-          status: 'Submitted',
-          requestType: planType,
-          createdAt: new Date().toISOString(),
-          customerName: formData.customerName.trim(),
-          customerUsername,
-          customerEmail: deliveryEmail,
-          title: formData.title,
-          style: formData.style,
-          aspectRatio: formData.aspectRatio,
-          duration: formData.duration,
-          language: formData.language,
-          storyPrompt: formData.storyDescription,
-          scenes: formData.scenes,
-          characters: formData.characters,
-          specialInstructions: formData.additionalInstructions,
-          pricing: {
-            type: planType,
-            currency: '₹',
-            estimatedAmount: planType === 'free_trial' ? 0 : 499,
-            paymentStatus: planType === 'free_trial' ? 'free_trial' : 'quote_pending'
-          }
-        };
-
-        try {
-          const existing = JSON.parse(localStorage.getItem('zenvora_local_requests') || '[]');
-          existing.unshift(fallbackRequest);
-          localStorage.setItem('zenvora_local_requests', JSON.stringify(existing));
-        } catch (e) {
-          // ignore
-        }
-
-        result = { request: fallbackRequest };
-      }
-
-      // Sync to local storage cache
-      try {
-        await saveVideoRequestToFirestore(result.request);
-      } catch (storageErr) {
-        console.warn('Notice: Background local request sync:', storageErr);
+      if (!fetchResult.ok || !fetchResult.data?.request) {
+        throw new Error(
+          fetchResult.data?.error ||
+            fetchResult.error ||
+            'An error occurred while submitting your video request. Please try again.'
+        );
       }
 
       const finalRequest = {
-        ...result.request,
-        emailNotification: result.emailNotification,
-        notificationMessage: result.message
+        ...fetchResult.data.request,
+        emailNotification: fetchResult.data.emailNotification,
+        notificationMessage: fetchResult.data.message
       };
 
       localStorage.removeItem(STORAGE_KEY);
       onSuccess(finalRequest);
     } catch (e: any) {
-      setSubmitError(e.message || 'An error occurred while submitting your video request. Please try again.');
+      setSubmitError(
+        e.message || 'An error occurred while submitting your video request. Please try again.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -413,7 +363,7 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
             title="Reset form"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Draft</span>
+            <span>{confirmReset ? 'Click again to confirm reset' : 'Reset Draft'}</span>
           </button>
         </div>
 

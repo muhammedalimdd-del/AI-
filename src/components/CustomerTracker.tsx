@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Clock, CheckCircle2, AlertCircle, Send, Video, Download, ArrowLeft, MessageSquare, ExternalLink, ShieldCheck } from 'lucide-react';
-import { getVideoRequestById } from '../services/firestoreService.ts';
-import { safeFetchJson, safeResponseJson } from '../services/apiClient.ts';
+import {
+  Search,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  Send,
+  Video,
+  Download,
+  ArrowLeft,
+  MessageSquare,
+  ExternalLink
+} from 'lucide-react';
+import { safeFetchJson } from '../services/apiClient.ts';
+import { getAuthHeaders } from '../services/deviceIdentity.ts';
 
 interface CustomerTrackerProps {
   initialRequestId?: string;
@@ -24,6 +35,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
   const [replyMessage, setReplyMessage] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [replySuccess, setReplySuccess] = useState<string | null>(null);
+  const [replyError, setReplyError] = useState<string | null>(null);
 
   // Auto-fetch if initial props are provided
   useEffect(() => {
@@ -34,7 +46,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
   const handleLookup = async (idToLook: string, keyToLook: string) => {
     if (!idToLook.trim() || !keyToLook.trim()) {
-      setError('Please provide both your Request ID and your email or tracking token.');
+      setError('Please provide both your Request ID and your delivery email or tracking token.');
       return;
     }
 
@@ -42,58 +54,24 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
     setError(null);
 
     try {
-      let foundRequest: any = null;
+      const result = await safeFetchJson<{ request?: any; error?: string }>('/api/requests/track', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          requestId: idToLook.trim(),
+          emailOrToken: keyToLook.trim()
+        })
+      });
 
-      try {
-        const result = await safeFetchJson<{ request?: any; error?: string }>('/api/requests/track', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requestId: idToLook.trim(),
-            emailOrToken: keyToLook.trim()
-          })
-        });
-
-        if (result.ok && result.data?.request) {
-          foundRequest = result.data.request;
-        }
-      } catch (netErr) {
-        // Fallback for static hosting
+      if (!result.ok || !result.data?.request) {
+        throw new Error(
+          result.data?.error ||
+            result.error ||
+            'Request not found or access denied. Verify your Request ID, email, or secret token.'
+        );
       }
 
-      // If not found from server, check Firestore database
-      if (!foundRequest) {
-        try {
-          const fsDoc = await getVideoRequestById(idToLook.trim());
-          if (fsDoc) {
-            foundRequest = fsDoc;
-          }
-        } catch (fsErr) {
-          console.warn('Notice: Firestore lookup error:', fsErr);
-        }
-      }
-
-      // If not found from server or Firestore, search localStorage
-      if (!foundRequest) {
-        try {
-          const localRequests = JSON.parse(localStorage.getItem('zenvora_local_requests') || '[]');
-          const match = localRequests.find((r: any) => 
-            r.id.toLowerCase() === idToLook.trim().toLowerCase() &&
-            (r.customerEmail.toLowerCase() === keyToLook.trim().toLowerCase() || r.accessToken === keyToLook.trim())
-          );
-          if (match) {
-            foundRequest = match;
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-
-      if (!foundRequest) {
-        throw new Error('Request not found. Please verify your Request ID and email.');
-      }
-
-      setRequestData(foundRequest);
+      setRequestData(result.data.request);
     } catch (e: any) {
       setError(e.message || 'Failed to locate request.');
       setRequestData(null);
@@ -107,26 +85,31 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
     setIsSendingReply(true);
     setReplySuccess(null);
+    setReplyError(null);
 
     try {
-      const result = await safeFetchJson<{ error?: string }>((`/api/requests/${requestData.id}/customer-message`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: replyMessage.trim(),
-          token: requestData.accessToken,
-          email: requestData.customerEmail
-        })
-      });
+      const result = await safeFetchJson<{ error?: string }>(
+        `/api/requests/${requestData.id}/customer-message`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            message: replyMessage.trim(),
+            token: requestData.accessToken,
+            email: requestData.customerEmail
+          })
+        }
+      );
 
-      if (!result.ok) throw new Error(result.data?.error || result.error || 'Failed to submit response.');
+      if (!result.ok) {
+        throw new Error(result.data?.error || result.error || 'Failed to submit response.');
+      }
 
       setReplyMessage('');
       setReplySuccess('Your reply has been forwarded directly to the studio director!');
-      // Refresh request
       handleLookup(requestData.id, requestData.accessToken);
     } catch (e: any) {
-      alert(e.message || 'Error submitting response');
+      setReplyError(e.message || 'Error submitting response.');
     } finally {
       setIsSendingReply(false);
     }
@@ -134,16 +117,26 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
   const getStatusStepIndex = (status: string): number => {
     switch (status) {
-      case 'Submitted': return 0;
-      case 'Under Review': return 1;
-      case 'Awaiting Customer Information': return 1;
-      case 'Approved': return 2;
-      case 'In Production': return 3;
-      case 'Quality Check': return 4;
-      case 'Completed': return 5;
-      case 'Delivered': return 6;
-      case 'Cancelled': return -1;
-      default: return 0;
+      case 'Submitted':
+        return 0;
+      case 'Under Review':
+        return 1;
+      case 'Awaiting Customer Information':
+        return 1;
+      case 'Approved':
+        return 2;
+      case 'In Production':
+        return 3;
+      case 'Quality Check':
+        return 4;
+      case 'Completed':
+        return 5;
+      case 'Delivered':
+        return 6;
+      case 'Cancelled':
+        return -1;
+      default:
+        return 0;
     }
   };
 
@@ -186,7 +179,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
         {/* Lookup form */}
         <form
-          onSubmit={e => {
+          onSubmit={(e) => {
             e.preventDefault();
             handleLookup(requestId, emailOrToken);
           }}
@@ -199,7 +192,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
             <input
               type="text"
               value={requestId}
-              onChange={e => setRequestId(e.target.value)}
+              onChange={(e) => setRequestId(e.target.value)}
               placeholder="e.g. VR-2026-8941"
               className="w-full px-3.5 py-2.5 bg-[#0C1220] border border-slate-800 rounded-xl text-white text-xs font-mono uppercase focus:outline-none focus:border-indigo-500"
               required
@@ -208,12 +201,12 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
           <div className="sm:col-span-5">
             <label className="block text-xs font-semibold text-slate-300 mb-1">
-              Registered Email or Secret Token
+              Delivery Email or Secret Token
             </label>
             <input
               type="text"
               value={emailOrToken}
-              onChange={e => setEmailOrToken(e.target.value)}
+              onChange={(e) => setEmailOrToken(e.target.value)}
               placeholder="e.g. yourname@gmail.com or sec_..."
               className="w-full px-3.5 py-2.5 bg-[#0C1220] border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
               required
@@ -319,14 +312,15 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
               <div className="p-4 rounded-xl bg-[#0C1220] border border-slate-800 text-xs">
                 <span className="text-slate-400 block mb-1">Studio Director Updates:</span>
                 <span className="text-indigo-200 leading-relaxed block">
-                  {requestData.customerVisibleNotes || 'No notes currently posted. Your brief is progressing according to schedule.'}
+                  {requestData.customerVisibleNotes ||
+                    'No notes currently posted. Your brief is progressing according to schedule.'}
                 </span>
               </div>
             </div>
           </div>
 
           {/* COMPLETED VIDEO DELIVERY SECTION */}
-          {requestData.completedVideo && (
+          {(requestData.completedVideo?.directLink || requestData.completedVideo?.downloadUrl || requestData.completedVideo?.url) && (
             <div className="rounded-2xl bg-gradient-to-b from-emerald-950/40 to-slate-900 border border-emerald-800/60 p-6 sm:p-8 animate-fadeIn">
               <div className="flex items-center gap-3 mb-4">
                 <div className="p-2.5 rounded-xl bg-emerald-900/60 text-emerald-400">
@@ -346,12 +340,15 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
                 </div>
               )}
 
-              {/* Video Player Preview if direct MP4 */}
               <div className="mb-6 rounded-xl overflow-hidden bg-black border border-slate-800 max-w-xl mx-auto shadow-2xl">
                 <video
                   controls
                   className="w-full max-h-[450px] object-contain"
-                  src={requestData.completedVideo.url}
+                  src={
+                    requestData.completedVideo.directLink ||
+                    requestData.completedVideo.downloadUrl ||
+                    requestData.completedVideo.url
+                  }
                 >
                   Your browser does not support the video tag.
                 </video>
@@ -359,7 +356,11 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
               <div className="flex flex-wrap items-center justify-center gap-4">
                 <a
-                  href={requestData.completedVideo.url}
+                  href={
+                    requestData.completedVideo.directLink ||
+                    requestData.completedVideo.downloadUrl ||
+                    requestData.completedVideo.url
+                  }
                   download
                   target="_blank"
                   rel="noreferrer"
@@ -370,7 +371,11 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
                 </a>
 
                 <a
-                  href={requestData.completedVideo.url}
+                  href={
+                    requestData.completedVideo.directLink ||
+                    requestData.completedVideo.downloadUrl ||
+                    requestData.completedVideo.url
+                  }
                   target="_blank"
                   rel="noreferrer"
                   className="px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs flex items-center gap-2 transition-all"
@@ -386,7 +391,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
           <div className="rounded-2xl bg-[#090D16] border border-slate-800 p-6 sm:p-8">
             <h4 className="text-sm font-bold text-white flex items-center gap-2 mb-2">
               <MessageSquare className="w-4 h-4 text-indigo-400" />
-              Production Clarifications & Questions
+              Production Clarifications &amp; Questions
             </h4>
             <p className="text-xs text-slate-400 mb-6">
               If the director needs extra details on characters or scenes, you can respond directly here.
@@ -407,7 +412,12 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
                       <span className="font-semibold text-indigo-300">
                         {item.from === 'admin' ? 'Studio Director' : 'You (Customer)'}
                       </span>
-                      <span>{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>
+                        {new Date(item.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </span>
                     </div>
                     <p className="leading-relaxed">{item.message}</p>
                   </div>
@@ -428,7 +438,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
                 <input
                   type="text"
                   value={replyMessage}
-                  onChange={e => setReplyMessage(e.target.value)}
+                  onChange={(e) => setReplyMessage(e.target.value)}
                   placeholder="Type your response or additional instruction..."
                   className="flex-1 px-4 py-2.5 bg-[#0C1220] border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
                 />
@@ -442,6 +452,13 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
                   <Send className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {replyError && (
+                <p className="text-xs text-rose-400 mt-2 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {replyError}
+                </p>
+              )}
 
               {replySuccess && (
                 <p className="text-xs text-emerald-400 mt-2 flex items-center gap-1">
@@ -464,15 +481,19 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
               </div>
               <div>
                 <span className="text-slate-400 block mb-1">Format:</span>
-                <span className="text-white font-semibold">{requestData.format.toUpperCase()} ({requestData.aspectRatio})</span>
+                <span className="text-white font-semibold">
+                  {requestData.format.toUpperCase()} ({requestData.aspectRatio})
+                </span>
               </div>
               <div>
                 <span className="text-slate-400 block mb-1">Duration:</span>
                 <span className="text-white font-semibold">{requestData.duration}</span>
               </div>
               <div>
-                <span className="text-slate-400 block mb-1">Characters:</span>
-                <span className="text-white font-semibold">{requestData.charactersCount} defined</span>
+                <span className="text-slate-400 block mb-1">Payment Policy:</span>
+                <span className="text-indigo-300 font-semibold">
+                  The payment will be based on the video.
+                </span>
               </div>
             </div>
           </div>

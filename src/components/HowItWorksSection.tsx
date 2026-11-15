@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserCheck, Edit3, Send, Gift, Video, ArrowRight } from 'lucide-react';
+import { UserCheck, Edit3, Send, CreditCard, Video, ArrowRight } from 'lucide-react';
 
 interface HowItWorksProps {
   onRequestClick: () => void;
@@ -9,8 +9,8 @@ export const HowItWorksSection: React.FC<HowItWorksProps> = ({ onRequestClick })
   const steps = [
     {
       number: '01',
-      title: 'Sign in with Google',
-      description: 'Authenticate with your real Google account to verify your delivery address and check your one-time free trial eligibility.',
+      title: 'Log in to your account',
+      description: 'Sign in with your personal username and password to keep all your creative briefs and deliveries private.',
       icon: UserCheck,
       color: 'from-blue-500 to-indigo-600'
     },
@@ -23,22 +23,22 @@ export const HowItWorksSection: React.FC<HowItWorksProps> = ({ onRequestClick })
     },
     {
       number: '03',
-      title: 'Submit your request',
-      description: 'Review your complete creative brief and confirm delivery details. Your brief is saved securely to our studio production database.',
+      title: 'Enter delivery email & submit',
+      description: 'Provide the email address where you want your completed video delivered and submit your request directly to our studio.',
       icon: Send,
       color: 'from-purple-500 to-pink-600'
     },
     {
       number: '04',
-      title: 'Choose trial or paid option',
-      description: 'Eligible accounts can claim their one-time free trial. Otherwise, select paid request where the payment is based on the video complexity.',
-      icon: Gift,
+      title: 'Receive custom pricing quote',
+      description: 'The payment will be based on the video. Our studio reviews your creative brief and sends a personalized quote for approval.',
+      icon: CreditCard,
       color: 'from-pink-500 to-amber-500'
     },
     {
       number: '05',
       title: 'Receive completed video by email',
-      description: 'Our team creates and curates your video using advanced AI tools. When ready, a high-definition download link is sent to your Gmail.',
+      description: 'Our team creates and curates your video using advanced AI tools. When ready, a high-definition download link is sent to your email.',
       icon: Video,
       color: 'from-emerald-500 to-cyan-500'
     }

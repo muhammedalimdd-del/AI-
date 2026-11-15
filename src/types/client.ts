@@ -9,8 +9,6 @@ export type VideoStatus =
   | 'Delivered'
   | 'Cancelled';
 
-export type TrialStatus = 'eligible' | 'reserved' | 'used';
-
 export interface VideoStyleOption {
   id: string;
   title: string;
@@ -24,17 +22,14 @@ export interface VideoStyleOption {
 
 export interface UserAccount {
   uid: string;
-  username?: string;
-  email: string;
+  username: string;
+  email?: string;
   displayName: string;
-  deviceId?: string;
   photoURL?: string;
   createdAt: string;
   lastLoginAt: string;
-  trialStatus: TrialStatus;
-  trialUsedAt?: string;
-  trialRequestId?: string;
-  role?: 'user' | 'admin';
+  role: 'customer' | 'admin';
+  hasRecoveryEmail?: boolean;
 }
 
 export interface QuoteDetails {
@@ -123,7 +118,7 @@ export interface VideoRequestClient {
   status: VideoStatus;
   userId?: string;
   userEmail?: string;
-  requestType: 'free_trial' | 'paid';
+  requestType: 'paid';
   pricingMessage: string;
   quote?: QuoteDetails;
   payment?: PaymentDetails;
@@ -170,11 +165,11 @@ export interface VideoRequestClient {
 }
 
 export interface RequestFormData {
-  // Account & Trial
+  // Account
   userId?: string;
   userEmail?: string;
   customerUsername?: string;
-  requestType: 'free_trial' | 'paid';
+  requestType: 'paid';
 
   // Step 1: Basic
   title: string;

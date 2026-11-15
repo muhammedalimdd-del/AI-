@@ -1,6 +1,8 @@
 import React from 'react';
 import { AiVideoCameraLogo } from './Brand/AiVideoCameraLogo.tsx';
-import { Shield, Lock, FileText, Mail, Heart } from 'lucide-react';
+import { Shield, Lock } from 'lucide-react';
+
+import { isRunningInElectron } from '../services/desktopBridge.ts';
 
 interface FooterProps {
   onNavigate: (sectionId: string) => void;
@@ -10,22 +12,21 @@ interface FooterProps {
   onPrivacyClick: () => void;
   onTermsClick: () => void;
   onDeleteRequestClick: () => void;
-  onAdminClick: () => void;
   onContactClick: () => void;
   onBudgetContactClick: () => void;
+  onDownloadAppClick?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
   onNavigate,
   onRequestClick,
-  onTrackClick,
   onMyRequestsClick,
   onPrivacyClick,
   onTermsClick,
   onDeleteRequestClick,
-  onAdminClick,
   onContactClick,
-  onBudgetContactClick
+  onBudgetContactClick,
+  onDownloadAppClick
 }) => {
   return (
     <footer className="w-full bg-[#04060C] border-t border-slate-800/80 pt-16 pb-12 text-slate-400 text-sm">
@@ -35,7 +36,7 @@ export const Footer: React.FC<FooterProps> = ({
           <div className="lg:col-span-2 space-y-4">
             <AiVideoCameraLogo size="sm" showText={true} />
             <p className="text-slate-400 leading-relaxed text-xs max-w-md">
-              A bespoke human-and-AI video production studio. Tell us your story, provide character references, and let our dedicated creative workflow bring your vision to life with precision and secure delivery to your verified Google email.
+              A bespoke human-and-AI video production studio. Tell us your story, provide character references, and let our dedicated creative workflow bring your vision to life with direct delivery to your chosen email address.
             </p>
             <div className="flex items-center gap-3 text-xs text-slate-400 pt-2">
               <span className="flex items-center gap-1">
@@ -43,7 +44,7 @@ export const Footer: React.FC<FooterProps> = ({
               </span>
               <span>·</span>
               <span className="flex items-center gap-1">
-                <Shield className="w-3.5 h-3.5 text-emerald-400" /> Google Verified
+                <Shield className="w-3.5 h-3.5 text-emerald-400" /> Private Customer Accounts
               </span>
             </div>
           </div>
@@ -82,11 +83,11 @@ export const Footer: React.FC<FooterProps> = ({
 
           {/* Contact & Custom Options */}
           <div>
-            <h4 className="text-xs uppercase font-bold tracking-wider text-slate-200 mb-4">Proposals & Contact</h4>
+            <h4 className="text-xs uppercase font-bold tracking-wider text-slate-200 mb-4">Proposals &amp; Contact</h4>
             <ul className="space-y-2.5 text-xs">
               <li>
                 <button onClick={onBudgetContactClick} className="hover:text-white text-cyan-400 font-semibold transition-colors cursor-pointer">
-                  Contact & Video Budget Form
+                  Contact &amp; Video Budget Form
                 </button>
               </li>
               <li>
@@ -99,17 +100,22 @@ export const Footer: React.FC<FooterProps> = ({
                   Frequently Asked Questions
                 </button>
               </li>
-              <li>
-                <button onClick={onAdminClick} className="hover:text-white transition-colors text-slate-500 cursor-pointer">
-                  Studio Owner Login
-                </button>
-              </li>
+              {onDownloadAppClick && !isRunningInElectron() && (
+                <li>
+                  <button
+                    onClick={onDownloadAppClick}
+                    className="hover:text-amber-200 text-amber-300 font-semibold transition-colors cursor-pointer"
+                  >
+                    Download Windows App (.exe)
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
 
           {/* Trust & Compliance */}
           <div>
-            <h4 className="text-xs uppercase font-bold tracking-wider text-slate-200 mb-4">Trust & Terms</h4>
+            <h4 className="text-xs uppercase font-bold tracking-wider text-slate-200 mb-4">Trust &amp; Terms</h4>
             <ul className="space-y-2.5 text-xs">
               <li>
                 <button onClick={onPrivacyClick} className="hover:text-white transition-colors cursor-pointer">
@@ -135,8 +141,8 @@ export const Footer: React.FC<FooterProps> = ({
           <p>
             &copy; {new Date().getFullYear()} AI TIMES. All creative briefs and reference assets handled confidentially.
           </p>
-          <div className="flex items-center gap-1 text-slate-400">
-            <span>The payment will be based on the video · 1-Time Free Trial for Eligible Accounts</span>
+          <div className="flex items-center gap-1 text-slate-300 font-medium">
+            <span>The payment will be based on the video.</span>
           </div>
         </div>
       </div>

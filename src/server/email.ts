@@ -554,13 +554,10 @@ Status: Verified
       ? configuredOwner
       : OWNER_GMAIL_ADDRESS;
     const adminLink = `${baseUrl}/admin?request=${request.id}`;
-    const isTrial = request.requestType === 'free_trial';
     const customerUsername = request.customerUsername || request.userId || request.customerName;
-    const budgetLabel = isTrial
-      ? 'Free Trial (₹0 — One-Time Free Trial)'
-      : request.quote?.formattedAmount
+    const budgetLabel = request.quote?.formattedAmount
       ? `Paid Request (${request.quote.formattedAmount})`
-      : `Paid Request (${request.pricingMessage || 'Custom Quote Based on Video'})`;
+      : 'Paid Request — The payment will be based on the video.';
 
     const uploadedPhotoLinks = request.characters
       .filter((c) => !!c.referencePhotoUrl)
@@ -682,8 +679,8 @@ Status: Verified
     <div style="padding:28px;">
 
       <!-- REQUEST TYPE & BUDGET -->
-      <div style="margin-bottom:24px; padding:18px; background:#131B2E; border-left:5px solid ${isTrial ? '#10B981' : '#F59E0B'}; border-radius:6px;">
-        <div style="font-size:15px; font-weight:800; color:${isTrial ? '#34D399' : '#F59E0B'}; letter-spacing:0.5px;">
+      <div style="margin-bottom:24px; padding:18px; background:#131B2E; border-left:5px solid #F59E0B; border-radius:6px;">
+        <div style="font-size:15px; font-weight:800; color:#F59E0B; letter-spacing:0.5px;">
           BUDGET &amp; REQUEST TYPE: ${escapeHtml(budgetLabel)}
         </div>
         <p style="margin:6px 0 0; font-size:13px; color:#94A3B8;">
@@ -904,7 +901,6 @@ ${adminLink}
   // Exact Subject: YOUR AI VIDEO REQUEST HAS BEEN RECEIVED
   // Exact Message: "Thank you for submitting your AI video request! We have received your requirements and will review your idea. You will receive further updates and your completed video through email when it is ready."
   public async sendCustomerConfirmation(request: VideoRequest, baseUrl: string): Promise<SendResult> {
-    const isTrial = request.requestType === 'free_trial';
     const trackingLink = `${baseUrl}/my-requests?id=${request.id}&token=${request.accessToken}`;
 
     const subject = 'YOUR AI VIDEO REQUEST HAS BEEN RECEIVED';
@@ -936,8 +932,8 @@ ${adminLink}
         <h4 style="margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:1px; color:#818CF8;">Summary of Your Video Request</h4>
         <ul style="margin:0; padding-left:20px; font-size:14px; color:#E2E8F0; line-height:1.8;">
           <li><strong>Video Title:</strong> ${escapeHtml(request.title)}</li>
-          <li><strong>Request Type:</strong> <span style="color:${isTrial ? '#34D399' : '#F59E0B'}; font-weight:700;">${isTrial ? 'FREE TRIAL' : 'PAID VIDEO REQUEST'}</span></li>
-          <li><strong>Pricing Note:</strong> ${isTrial ? 'One-Time Free Trial' : 'The payment will be based on the video.'}</li>
+          <li><strong>Request Type:</strong> <span style="color:#F59E0B; font-weight:700;">PAID VIDEO REQUEST</span></li>
+          <li><strong>Pricing Note:</strong> The payment will be based on the video.</li>
           <li><strong>Style:</strong> ${escapeHtml(request.style)}</li>
           <li><strong>Orientation:</strong> ${request.format.toUpperCase()} (${escapeHtml(request.aspectRatio)})</li>
           <li><strong>Duration:</strong> ${escapeHtml(request.duration)}</li>
@@ -953,7 +949,7 @@ ${adminLink}
       </div>
 
       <p style="font-size:12px; color:#94A3B8; text-align:center; margin:0;">
-        Delivery updates will be sent to your verified Google account: <strong>${escapeHtml(request.customerEmail)}</strong>
+        Delivery updates and your completed video will be sent to: <strong>${escapeHtml(request.customerEmail)}</strong>
       </p>
     </div>
 
@@ -974,8 +970,8 @@ ${primaryMessage}
 
 Unique Request ID: ${request.id}
 Video Title: ${request.title}
-Request Type: ${isTrial ? 'FREE TRIAL' : 'PAID VIDEO REQUEST'}
-Pricing: ${isTrial ? 'One-Time Free Trial' : 'The payment will be based on the video.'}
+Request Type: PAID VIDEO REQUEST
+Pricing: The payment will be based on the video.
 Style: ${request.style}
 Format: ${request.format} (${request.aspectRatio})
 Duration: ${request.duration}
@@ -1359,10 +1355,9 @@ Thank you for creating with AI TIMES!
       <p style="color:#CBD5E1; font-size:14px;">
         Thank you for sharing your video idea with AI TIMES. We have received your request and will review it.
       </p>
-      ${budgetReq.isFree ? `
-      <div style="background:#064E3B; border:1px solid #059669; padding:12px; border-radius:6px; color:#A7F3D0; font-size:13px; margin:16px 0;">
-        <strong>Free request submitted — no payment was collected.</strong> Video creation is subject to review, feasibility, and confirmation by our studio owner.
-      </div>` : ''}
+      <div style="background:#131B2E; border:1px solid #1E293B; padding:12px; border-radius:6px; color:#F59E0B; font-size:13px; margin:16px 0;">
+        <strong>Pricing Note:</strong> The payment will be based on the video. Our studio owner will review your idea and send a custom quote.
+      </div>
     </div>
   </div>
 </body>
@@ -1445,6 +1440,39 @@ Thank you for creating with AI TIMES!
       subject,
       html,
       text: `Customer ${request.customerName} (${request.customerEmail}) replied to request [${request.id}]:\n\n"${message}"\n\nView details: ${adminLink}`
+    });
+  }
+
+  public async sendPasswordResetCode(
+    email: string,
+    username: string,
+    code: string
+  ): Promise<SendResult> {
+    const subject = `AI TIMES — Password Reset Code for @${username}`;
+    const html = `
+<!DOCTYPE html>
+<html>
+<body style="margin:0; padding:24px; background-color:#0B0F19; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#F1F5F9; line-height:1.6;">
+  <div style="max-width:540px; margin:0 auto; background-color:#0F172A; border:1px solid #1E293B; border-radius:12px; padding:28px;">
+    <div style="font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:#F59E0B; font-weight:700;">AI TIMES &bull; Account Security</div>
+    <h2 style="margin:8px 0 12px; color:#FFFFFF;">Password Reset Verification</h2>
+    <p style="color:#CBD5E1; font-size:14px;">Hello <strong>@${escapeHtml(username)}</strong>,</p>
+    <p style="color:#CBD5E1; font-size:14px;">Use the 6-digit verification code below to reset your password. This code expires in 15 minutes.</p>
+    <div style="background:#131B2E; border:1px solid #F59E0B; border-radius:8px; padding:18px; text-align:center; margin:20px 0;">
+      <span style="font-size:28px; font-weight:800; letter-spacing:6px; font-family:monospace; color:#FBBF24;">${escapeHtml(code)}</span>
+    </div>
+    <p style="color:#64748B; font-size:12px;">If you did not request a password reset, you can safely ignore this message.</p>
+  </div>
+</body>
+</html>`;
+
+    return this.dispatchEmail({
+      requestId: `PWD-${Date.now()}`,
+      type: 'password_reset',
+      to: email,
+      subject,
+      html,
+      text: `Hello @${username},\n\nYour AI TIMES password reset code is: ${code}\nThis code expires in 15 minutes.`
     });
   }
 }
