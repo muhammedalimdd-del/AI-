@@ -1,5 +1,5 @@
 import React from 'react';
-import { RequestFormData, UserAccount } from '../../types/client.ts';
+import { RequestFormData } from '../../types/client.ts';
 import {
   CheckCircle,
   Edit3,
@@ -20,7 +20,6 @@ interface Step8Props {
   onSubmit: (requestType: 'paid') => void;
   isSubmitting: boolean;
   submitError: string | null;
-  currentUser?: UserAccount | null;
 }
 
 export const Step8ReviewSubmit: React.FC<Step8Props> = ({

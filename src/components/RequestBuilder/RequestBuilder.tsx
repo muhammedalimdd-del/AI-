@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RequestFormData, UserAccount } from '../../types/client.ts';
+import { RequestFormData } from '../../types/client.ts';
 import { Step1Basic } from './Step1Basic.tsx';
 import { Step2Style } from './Step2Style.tsx';
 import { Step3Format } from './Step3Format.tsx';
@@ -10,14 +10,13 @@ import { Step7CustomerDelivery } from './Step7CustomerDelivery.tsx';
 import { Step8ReviewSubmit } from './Step8ReviewSubmit.tsx';
 import { ArrowLeft, ArrowRight, RotateCcw, AlertCircle } from 'lucide-react';
 import { safeFetchJson } from '../../services/apiClient.ts';
-import { getAuthHeaders } from '../../services/deviceIdentity.ts';
+import { getAuthHeaders, saveSubmittedReceipt } from '../../services/deviceIdentity.ts';
 
 interface RequestBuilderProps {
   initialStyle?: string;
   onSuccess: (createdRequest: any) => void;
   onOpenPrivacy: () => void;
   onOpenTerms: () => void;
-  currentUser?: UserAccount | null;
 }
 
 const STORAGE_KEY = 'aitimes_draft_v2';
@@ -82,8 +81,7 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
   initialStyle,
   onSuccess,
   onOpenPrivacy,
-  onOpenTerms,
-  currentUser
+  onOpenTerms
 }) => {
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [formData, setFormData] = useState<RequestFormData>(() => {
@@ -104,31 +102,6 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
-
-  // Sync authenticated user into form data without overwriting customer's chosen delivery email with local placeholder
-  useEffect(() => {
-    if (currentUser) {
-      const isLocalDeviceEmail = currentUser.email?.toLowerCase().endsWith('@aivideomaker.local');
-      setFormData((prev) => {
-        const prevCleanEmail = prev.customerEmail?.toLowerCase().endsWith('@aivideomaker.local')
-          ? ''
-          : prev.customerEmail;
-        const fallbackEmail = !isLocalDeviceEmail ? currentUser.email || '' : '';
-        const chosenEmail = prevCleanEmail || fallbackEmail;
-
-        return {
-          ...prev,
-          requestType: 'paid',
-          userId: currentUser.uid,
-          userEmail: currentUser.email,
-          customerUsername: currentUser.username || currentUser.displayName,
-          customerEmail: chosenEmail,
-          confirmEmail: chosenEmail,
-          customerName: prev.customerName || currentUser.displayName || currentUser.username || ''
-        };
-      });
-    }
-  }, [currentUser]);
 
   // Autosave to localStorage on every change
   useEffect(() => {
@@ -247,21 +220,13 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
       return;
     }
     localStorage.removeItem(STORAGE_KEY);
-    const isLocalDeviceEmail = currentUser?.email?.toLowerCase().endsWith('@aivideomaker.local');
-    const defaultEmail = !isLocalDeviceEmail ? currentUser?.email || '' : '';
-    setFormData({
-      ...DEFAULT_FORM_DATA,
-      customerEmail: defaultEmail,
-      confirmEmail: defaultEmail,
-      customerUsername: currentUser?.username || currentUser?.displayName || '',
-      customerName: currentUser?.displayName || currentUser?.username || ''
-    });
+    setFormData({ ...DEFAULT_FORM_DATA });
     setCurrentStep(1);
     setValidationError(null);
     setConfirmReset(false);
   };
 
-  // Submit paid video request to authenticated backend API
+  // Submit paid video request to backend API
   const handleSubmit = async () => {
     if (isSubmitting) return;
 
@@ -281,16 +246,10 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
     setSubmitError(null);
 
     const deliveryEmail = formData.customerEmail.trim().toLowerCase();
-    const customerUsername =
-      currentUser?.username ||
-      formData.customerUsername ||
-      currentUser?.displayName ||
-      formData.customerName.trim();
 
     const submissionPayload = {
       ...formData,
       requestType: 'paid' as const,
-      customerUsername,
       customerName: formData.customerName.trim(),
       customerEmail: deliveryEmail,
       confirmEmail: deliveryEmail
@@ -321,6 +280,14 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
         emailNotification: fetchResult.data.emailNotification,
         notificationMessage: fetchResult.data.message
       };
+
+      saveSubmittedReceipt({
+        id: finalRequest.id,
+        accessToken: finalRequest.accessToken || '',
+        title: finalRequest.title || 'Custom Video Request',
+        customerEmail: finalRequest.customerEmail || deliveryEmail,
+        createdAt: finalRequest.createdAt || new Date().toISOString()
+      });
 
       localStorage.removeItem(STORAGE_KEY);
       onSuccess(finalRequest);
@@ -429,7 +396,6 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
               updateData={updateData}
               onOpenPrivacy={onOpenPrivacy}
               onOpenTerms={onOpenTerms}
-              currentUser={currentUser}
             />
           )}
           {currentStep === 8 && (
@@ -440,7 +406,6 @@ export const RequestBuilder: React.FC<RequestBuilderProps> = ({
               onSubmit={handleSubmit}
               isSubmitting={isSubmitting}
               submitError={submitError}
-              currentUser={currentUser}
             />
           )}
         </div>

@@ -554,7 +554,6 @@ Status: Verified
       ? configuredOwner
       : OWNER_GMAIL_ADDRESS;
     const adminLink = `${baseUrl}/admin?request=${request.id}`;
-    const customerUsername = request.customerUsername || request.userId || request.customerName;
     const budgetLabel = request.quote?.formattedAmount
       ? `Paid Request (${request.quote.formattedAmount})`
       : 'Paid Request — The payment will be based on the video.';
@@ -697,10 +696,6 @@ Status: Verified
             <td style="padding:8px 12px; color:#FFFFFF; font-weight:700;">${escapeHtml(request.customerName)}</td>
           </tr>
           <tr>
-            <td style="padding:8px 12px; color:#94A3B8;">Customer Username:</td>
-            <td style="padding:8px 12px; color:#A78BFA; font-family:monospace; font-weight:700;">@${escapeHtml(customerUsername)}</td>
-          </tr>
-          <tr>
             <td style="padding:8px 12px; color:#94A3B8;">Customer Email (Delivery):</td>
             <td style="padding:8px 12px; color:#38BDF8; font-weight:700;"><a href="mailto:${escapeHtml(request.customerEmail)}" style="color:#38BDF8;">${escapeHtml(request.customerEmail)}</a></td>
           </tr>
@@ -825,18 +820,17 @@ ${subject}
 ============================================================
 
 1. Customer Name: ${request.customerName}
-2. Customer Username: @${customerUsername}
-3. Customer Email Address: ${request.customerEmail}
-4. Request ID: ${request.id}
-5. Submission Date: ${request.createdAt}
-6. Video Idea / Title: ${request.title}
-7. Description: ${request.storyDescription || request.summary}
-8. Budget: ${budgetLabel}
-9. Orientation: ${request.format.toUpperCase()} (${request.aspectRatio}) — ${request.outputResolution || request.resolution}
-10. Video Category and Style: ${request.videoType || 'Custom AI Video'} / ${request.purpose || 'General'} / ${request.style}${request.customStyle ? ` (${request.customStyle})` : ''}
-11. Requested Duration: ${request.duration}${request.customDuration ? ` (${request.customDuration})` : ''}
-12. Video Language: ${request.language || 'English'}
-13. Characters:
+2. Customer Email Address: ${request.customerEmail}
+3. Request ID: ${request.id}
+4. Submission Date: ${request.createdAt}
+5. Video Idea / Title: ${request.title}
+6. Description: ${request.storyDescription || request.summary}
+7. Budget: ${budgetLabel}
+8. Orientation: ${request.format.toUpperCase()} (${request.aspectRatio}) — ${request.outputResolution || request.resolution}
+9. Video Category and Style: ${request.videoType || 'Custom AI Video'} / ${request.purpose || 'General'} / ${request.style}${request.customStyle ? ` (${request.customStyle})` : ''}
+10. Requested Duration: ${request.duration}${request.customDuration ? ` (${request.customDuration})` : ''}
+11. Video Language: ${request.language || 'English'}
+12. Characters:
 ${
   request.characters.length > 0
     ? request.characters
@@ -901,7 +895,7 @@ ${adminLink}
   // Exact Subject: YOUR AI VIDEO REQUEST HAS BEEN RECEIVED
   // Exact Message: "Thank you for submitting your AI video request! We have received your requirements and will review your idea. You will receive further updates and your completed video through email when it is ready."
   public async sendCustomerConfirmation(request: VideoRequest, baseUrl: string): Promise<SendResult> {
-    const trackingLink = `${baseUrl}/my-requests?id=${request.id}&token=${request.accessToken}`;
+    const trackingLink = `${baseUrl}/?id=${request.id}&token=${request.accessToken}`;
 
     const subject = 'YOUR AI VIDEO REQUEST HAS BEEN RECEIVED';
     const primaryMessage =
@@ -944,7 +938,7 @@ ${adminLink}
 
       <div style="text-align:center; padding:12px 0 20px;">
         <a href="${trackingLink}" style="display:inline-block; background:linear-gradient(135deg, #6366F1 0%, #4F46E5 100%); color:#FFFFFF; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:700; font-size:14px; box-shadow:0 4px 12px rgba(99, 102, 241, 0.3);">
-          View Request Status in My Portal &rarr;
+          Track Your Request Status &rarr;
         </a>
       </div>
 
@@ -999,7 +993,7 @@ AI TIMES
     quote: QuoteDetails,
     baseUrl: string
   ): Promise<SendResult> {
-    const quoteReviewLink = `${baseUrl}/my-requests?id=${request.id}&token=${request.accessToken}`;
+    const quoteReviewLink = `${baseUrl}/?id=${request.id}&token=${request.accessToken}`;
     const subject = `Proposed Custom Quote for Your AI Video Request — [${request.id}]`;
 
     const html = `
@@ -1031,7 +1025,7 @@ AI TIMES
       </div>
 
       <p style="font-size:13px; color:#94A3B8;">
-        Paid production will begin only after you accept this quote. You can review the breakdown and choose to accept or decline directly from your account dashboard.
+        Paid production will begin only after you accept this quote. You can review the breakdown and choose to accept or decline directly on your request tracking page.
       </p>
 
       <div style="text-align:center; padding:18px 0;">
@@ -1074,7 +1068,7 @@ AI TIMES
 
   // 4. Email D: Payment Confirmed & Production Started
   public async sendPaymentConfirmedNotification(request: VideoRequest, baseUrl: string): Promise<SendResult> {
-    const trackingLink = `${baseUrl}/my-requests?id=${request.id}&token=${request.accessToken}`;
+    const trackingLink = `${baseUrl}/?id=${request.id}&token=${request.accessToken}`;
     const subject = `Payment Confirmed & Production Started — [${request.id}]`;
 
     const html = `
@@ -1138,7 +1132,7 @@ AI TIMES
     },
     baseUrl: string
   ): Promise<SendResult> {
-    const trackingLink = `${baseUrl}/my-requests?id=${request.id}&token=${request.accessToken}`;
+    const trackingLink = `${baseUrl}/?id=${request.id}&token=${request.accessToken}`;
     const fullDownloadUrl = options.downloadUrl.startsWith('http')
       ? options.downloadUrl
       : `${baseUrl}${options.downloadUrl.startsWith('/') ? '' : '/'}${options.downloadUrl}`;
@@ -1185,7 +1179,7 @@ AI TIMES
       </div>
 
       <div style="margin-top:24px; text-align:center;">
-        <a href="${trackingLink}" style="color:#818CF8; font-size:13px; text-decoration:underline;">View full request history & details on My Requests portal</a>
+        <a href="${trackingLink}" style="color:#818CF8; font-size:13px; text-decoration:underline;">View full request history & details on Track Request page</a>
       </div>
     </div>
 

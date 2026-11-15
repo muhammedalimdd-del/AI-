@@ -15,17 +15,13 @@ import { SuccessScreen } from './components/SuccessScreen.tsx';
 import { CustomerTracker } from './components/CustomerTracker.tsx';
 import { AdminDashboard } from './components/Admin/AdminDashboard.tsx';
 import { BudgetContactForm } from './components/BudgetContactForm/BudgetContactForm.tsx';
-import { LoadingScreen } from './components/LoadingScreen.tsx';
 import { WelcomeScreen } from './components/Auth/WelcomeScreen.tsx';
-import { MyRequestsView } from './components/Customer/MyRequestsView.tsx';
-import { UserProfileModal } from './components/Customer/UserProfileModal.tsx';
 import { PrivacyModal, TermsModal, DataDeletionModal, ContactModal } from './components/Modals/LegalModals.tsx';
 import { DownloadAppBottomBar } from './components/DownloadApp/DownloadAppBottomBar.tsx';
 import { DownloadPage } from './components/DownloadApp/DownloadPage.tsx';
 import { DesktopUpdateBanner } from './components/DownloadApp/DesktopUpdateBanner.tsx';
-import { checkActiveSession, logoutDeviceUser, CACHED_USER_KEY } from './services/deviceIdentity.ts';
+import { hasEnteredStudio, enterStudio } from './services/deviceIdentity.ts';
 import { ensureClientStorageReset } from './services/firestoreService.ts';
-import { UserAccount } from './types/client.ts';
 
 type MainView =
   | 'landing'
@@ -33,14 +29,13 @@ type MainView =
   | 'success'
   | 'tracker'
   | 'budget_contact'
-  | 'my_requests'
   | 'download';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
-  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
-  const [pendingActionAfterAuth, setPendingActionAfterAuth] = useState<'builder' | null>(null);
-  const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
+  const [hasEntered, setHasEntered] = useState<boolean>(() => {
+    ensureClientStorageReset();
+    return hasEnteredStudio();
+  });
   const [isGuestDownloadOpen, setIsGuestDownloadOpen] = useState<boolean>(false);
 
   const [currentView, setCurrentView] = useState<MainView>('landing');
@@ -57,28 +52,6 @@ export default function App() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isContactOpen, setIsContactOpen] = useState(false);
 
-  // Validate active session strictly with backend on load
-  useEffect(() => {
-    ensureClientStorageReset();
-    let isMounted = true;
-    checkActiveSession()
-      .then((sessionUser) => {
-        if (!isMounted) return;
-        setCurrentUser(sessionUser || null);
-      })
-      .catch((err) => {
-        console.warn('Notice: Active session check error:', err);
-        if (isMounted) setCurrentUser(null);
-      })
-      .finally(() => {
-        if (isMounted) setIsAuthInitializing(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   // Check URL query parameters & private admin route (/admin, /admin-login, ?admin=true)
   useEffect(() => {
     try {
@@ -87,7 +60,6 @@ export default function App() {
       const token = urlParams.get('token');
       const admin = urlParams.get('admin');
       const budget = urlParams.get('budget');
-      const myReq = urlParams.get('my-requests');
       const download = urlParams.get('download');
 
       if (
@@ -104,21 +76,31 @@ export default function App() {
       }
 
       if (budget === 'true') {
+        enterStudio();
+        setHasEntered(true);
         setCurrentView('budget_contact');
       }
 
-      if (myReq === 'true') {
-        setCurrentView('my_requests');
-      }
-
-      if (id) {
-        setTrackParams({ id, token: token || '' });
+      if (id || window.location.pathname === '/track') {
+        enterStudio();
+        setHasEntered(true);
+        if (id) {
+          setTrackParams({ id, token: token || '' });
+        }
         setCurrentView('tracker');
       }
     } catch {
       // ignore
     }
   }, []);
+
+  const handleSignIn = () => {
+    enterStudio();
+    setHasEntered(true);
+    setIsGuestDownloadOpen(false);
+    setCurrentView('landing');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleNavigate = (sectionId: string) => {
     if (currentView !== 'landing') {
@@ -136,10 +118,6 @@ export default function App() {
   const handleStartRequest = (styleName?: string) => {
     if (styleName) {
       setSelectedStyle(styleName);
-    }
-    if (!currentUser) {
-      setPendingActionAfterAuth('builder');
-      return;
     }
     setCurrentView('builder');
     setTimeout(() => {
@@ -160,39 +138,9 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleOpenMyRequests = () => {
-    setCurrentView('my_requests');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
   const handleOpenDownloadPage = () => {
     setIsGuestDownloadOpen(true);
     setCurrentView('download');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSignOut = async () => {
-    try {
-      localStorage.removeItem(CACHED_USER_KEY);
-      localStorage.removeItem('aivm_cached_user');
-      sessionStorage.removeItem('aivm_preview_mode');
-    } catch {}
-    await logoutDeviceUser();
-    setCurrentUser(null);
-    setCurrentView('landing');
-  };
-
-  const handleAuthSuccess = (userProfile: UserAccount) => {
-    try {
-      localStorage.setItem(CACHED_USER_KEY, JSON.stringify(userProfile));
-    } catch {}
-    setCurrentUser(userProfile);
-    if (pendingActionAfterAuth === 'builder') {
-      setPendingActionAfterAuth(null);
-      setCurrentView('builder');
-    } else {
-      setCurrentView('landing');
-    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -222,20 +170,15 @@ export default function App() {
     );
   }
 
-  // Initializing state
-  if (isAuthInitializing && !currentUser) {
-    return <LoadingScreen onTimeout={() => setIsAuthInitializing(false)} />;
-  }
-
-  // Opening screen when customer is not logged in
-  if (!currentUser) {
+  // Opening welcome screen with immediate SIGN IN button (no customer login required)
+  if (!hasEntered) {
     return (
       <div className="min-h-screen pb-24 relative bg-[#050811]">
         <DesktopUpdateBanner />
         {isGuestDownloadOpen ? (
           <DownloadPage onBack={() => setIsGuestDownloadOpen(false)} />
         ) : (
-          <WelcomeScreen onSuccess={handleAuthSuccess} />
+          <WelcomeScreen onSignIn={handleSignIn} />
         )}
         <PrivacyModal isOpen={isPrivacyOpen} onClose={() => setIsPrivacyOpen(false)} />
         <TermsModal isOpen={isTermsOpen} onClose={() => setIsTermsOpen(false)} />
@@ -252,17 +195,12 @@ export default function App() {
       <DesktopUpdateBanner />
       {/* Global Navbar (Customer-only, no admin links) */}
       <Navbar
-        currentUser={currentUser}
         onNavigate={handleNavigate}
         onRequestClick={() => handleStartRequest()}
         onTrackClick={() => handleOpenTracker()}
-        onMyRequestsClick={handleOpenMyRequests}
-        onProfileClick={() => setIsProfileOpen(true)}
         onContactClick={() => setIsContactOpen(true)}
         onBudgetContactClick={handleOpenBudgetContact}
         onDownloadAppClick={handleOpenDownloadPage}
-        onSignInClick={() => {}}
-        onSignOutClick={handleSignOut}
       />
 
       {/* Main View Router */}
@@ -270,11 +208,9 @@ export default function App() {
         {currentView === 'landing' && (
           <>
             <HeroSection
-              currentUser={currentUser}
               onRequestClick={() => handleStartRequest()}
               onExploreStylesClick={() => handleNavigate('video-styles')}
-              onMyRequestsClick={handleOpenMyRequests}
-              onProfileClick={() => setIsProfileOpen(true)}
+              onTrackClick={() => handleOpenTracker()}
             />
             <HowItWorksSection onRequestClick={() => handleStartRequest()} />
             <StylesGallerySection
@@ -319,16 +255,6 @@ export default function App() {
           </div>
         )}
 
-        {currentView === 'my_requests' && currentUser && (
-          <div className="py-8 bg-[#050811]">
-            <MyRequestsView
-              currentUser={currentUser}
-              onBackToHome={() => setCurrentView('landing')}
-              onRequestNewVideo={() => handleStartRequest()}
-            />
-          </div>
-        )}
-
         {currentView === 'builder' && (
           <div className="py-8 bg-[#050811]">
             <RequestBuilder
@@ -336,7 +262,6 @@ export default function App() {
               onSuccess={handleRequestSubmitted}
               onOpenPrivacy={() => setIsPrivacyOpen(true)}
               onOpenTerms={() => setIsTermsOpen(true)}
-              currentUser={currentUser}
             />
           </div>
         )}
@@ -382,7 +307,6 @@ export default function App() {
         onNavigate={handleNavigate}
         onRequestClick={() => handleStartRequest()}
         onTrackClick={() => handleOpenTracker()}
-        onMyRequestsClick={handleOpenMyRequests}
         onPrivacyClick={() => setIsPrivacyOpen(true)}
         onTermsClick={() => setIsTermsOpen(true)}
         onDeleteRequestClick={() => setIsDeleteOpen(true)}
@@ -396,18 +320,6 @@ export default function App() {
       <TermsModal isOpen={isTermsOpen} onClose={() => setIsTermsOpen(false)} />
       <DataDeletionModal isOpen={isDeleteOpen} onClose={() => setIsDeleteOpen(false)} />
       <ContactModal isOpen={isContactOpen} onClose={() => setIsContactOpen(false)} />
-
-      {/* User Profile Modal */}
-      {currentUser && (
-        <UserProfileModal
-          isOpen={isProfileOpen}
-          onClose={() => setIsProfileOpen(false)}
-          currentUser={currentUser}
-          onSignOut={handleSignOut}
-          onNewRequest={() => handleStartRequest()}
-          onViewRequests={handleOpenMyRequests}
-        />
-      )}
 
       {/* Permanent Fixed Bottom Download Our App Bar */}
       <DownloadAppBottomBar

@@ -52,6 +52,7 @@ const defaultOwnerEmail = process.env.OWNER_NOTIFICATION_EMAIL || 'muhammedalimd
 const defaultFromEmail = process.env.EMAIL_FROM_ADDRESS || 'studio@aivideomaker.com';
 
 const RESERVED_USERNAMES = new Set([
+  'alikka',
   'ali',
   'admin',
   'administrator',
@@ -110,12 +111,10 @@ export interface SafeUserAccount {
   photoURL?: string;
   createdAt: string;
   lastLoginAt: string;
-  role: 'customer' | 'admin';
-  hasRecoveryEmail: boolean;
+  role: 'admin';
 }
 
 export function sanitizeUser(user: UserAccount): SafeUserAccount {
-  const normalizedRole: 'customer' | 'admin' = user.role === 'admin' ? 'admin' : 'customer';
   const cleanEmail =
     user.email && !user.email.endsWith('@aivideomaker.local') ? user.email : '';
   return {
@@ -126,8 +125,7 @@ export function sanitizeUser(user: UserAccount): SafeUserAccount {
     photoURL: user.photoURL,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
-    role: normalizedRole,
-    hasRecoveryEmail: Boolean(cleanEmail && cleanEmail.includes('@'))
+    role: 'admin'
   };
 }
 
@@ -157,11 +155,18 @@ class Database {
           if (!Array.isArray(parsed.emailLogs)) parsed.emailLogs = [];
           if (!parsed.settings) parsed.settings = INITIAL_DB.settings;
 
-          // Normalize any legacy user roles
-          parsed.users = parsed.users.map((u: any) => ({
-            ...u,
-            role: u.role === 'admin' ? 'admin' : 'customer'
-          }));
+          // Keep only private admin accounts (customer accounts are removed)
+          parsed.users = parsed.users
+            .filter((u: any) => u.role === 'admin')
+            .map((u: any) => ({
+              ...u,
+              uid: 'adm_alikka',
+              username: 'alikka',
+              displayName: 'Alikka (Studio Admin)',
+              role: 'admin'
+            }));
+
+          parsed.sessions = parsed.sessions.filter((s: any) => s.role === 'admin');
 
           return parsed;
         }
@@ -209,13 +214,14 @@ class Database {
 
   public getAdminUser(): UserAccount | undefined {
     return this.data.users.find(
-      (u) => u.role === 'admin' && u.username?.trim().toLowerCase() === 'ali'
+      (u) => u.role === 'admin' && u.username?.trim().toLowerCase() === 'alikka'
     );
   }
 
   public hasAdminAccount(): boolean {
     const admin = this.getAdminUser();
-    return Boolean(admin && admin.passwordHash && admin.passwordSalt);
+    const envPass = (process.env.ADMIN_PASSWORD || '').trim();
+    return Boolean((admin && admin.passwordHash && admin.passwordSalt) || envPass);
   }
 
   public initAdminAccount(envPassword?: string): void {
@@ -223,7 +229,6 @@ class Database {
     const existingAdmin = this.getAdminUser();
 
     if (existingAdmin) {
-      // Only update hash if ADMIN_PASSWORD is provided AND admin had no password yet (or explicit sync requested)
       if (cleanPass && (!existingAdmin.passwordHash || process.env.ADMIN_PASSWORD_SYNC === 'true')) {
         const { hash, salt } = hashPassword(cleanPass);
         existingAdmin.passwordHash = hash;
@@ -235,8 +240,8 @@ class Database {
 
     if (!cleanPass) {
       console.warn(
-        '[SECURITY] ADMIN_PASSWORD is not set and admin account "ali" is not yet initialized. ' +
-          'Set ADMIN_PASSWORD in your environment or complete one-time setup at /admin.'
+        '[SECURITY] ADMIN_PASSWORD is not set in server environment variables for admin "alikka". ' +
+          'Set ADMIN_PASSWORD on the server to enable admin login.'
       );
       return;
     }
@@ -244,9 +249,9 @@ class Database {
     const now = new Date().toISOString();
     const { hash, salt } = hashPassword(cleanPass);
     const adminUser: UserAccount = {
-      uid: 'adm_ali',
-      username: 'ali',
-      displayName: 'Ali (Studio Owner)',
+      uid: 'adm_alikka',
+      username: 'alikka',
+      displayName: 'Alikka (Studio Admin)',
       email: defaultOwnerEmail,
       passwordHash: hash,
       passwordSalt: salt,
@@ -259,59 +264,6 @@ class Database {
     this.persist({ ...this.data });
   }
 
-  public setupInitialAdminPassword(params: {
-    password: string;
-    confirmPassword: string;
-  }): { user: SafeUserAccount; session: AuthSession } {
-    if (this.hasAdminAccount()) {
-      throw new Error('Admin account is already initialized.');
-    }
-    const password = params.password || '';
-    const confirmPassword = params.confirmPassword || '';
-    if (password.length < 6) {
-      throw new Error('Admin password must be at least 6 characters long.');
-    }
-    if (password !== confirmPassword) {
-      throw new Error('Passwords do not match.');
-    }
-
-    const now = new Date().toISOString();
-    const { hash, salt } = hashPassword(password);
-    let admin = this.getAdminUser();
-    if (!admin) {
-      admin = {
-        uid: 'adm_ali',
-        username: 'ali',
-        displayName: 'Ali (Studio Owner)',
-        email: defaultOwnerEmail,
-        passwordHash: hash,
-        passwordSalt: salt,
-        createdAt: now,
-        lastLoginAt: now,
-        role: 'admin'
-      };
-      this.data.users.push(admin);
-    } else {
-      admin.passwordHash = hash;
-      admin.passwordSalt = salt;
-      admin.lastLoginAt = now;
-    }
-
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    const session: AuthSession = {
-      token: sessionToken,
-      userId: admin.uid,
-      username: admin.username,
-      role: 'admin',
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()
-    };
-
-    this.data.sessions.push(session);
-    this.persist({ ...this.data });
-    return { user: sanitizeUser(admin), session };
-  }
-
   public loginAdminAccount(params: {
     username: string;
     password: string;
@@ -319,18 +271,26 @@ class Database {
     const username = (params.username || '').trim().toLowerCase();
     const password = params.password || '';
 
-    if (username !== 'ali' || !password) {
-      throw new Error('Incorrect admin username or password.');
+    if (username !== 'alikka' || !password) {
+      throw new Error('Invalid administrator credentials.');
     }
 
-    const admin = this.getAdminUser();
+    // Ensure lazy init if ADMIN_PASSWORD was injected after module load
+    let admin = this.getAdminUser();
+    const envPass = (process.env.ADMIN_PASSWORD || '').trim();
+    if ((!admin || !admin.passwordHash) && envPass) {
+      this.initAdminAccount(envPass);
+      admin = this.getAdminUser();
+    }
+
     if (!admin || !admin.passwordHash || !admin.passwordSalt) {
-      throw new Error('Admin account is not initialized.');
+      console.warn('[SECURITY] Admin login attempted while ADMIN_PASSWORD is not configured on the server.');
+      throw new Error('Invalid administrator credentials.');
     }
 
     const isValid = verifyPassword(password, admin.passwordHash, admin.passwordSalt);
     if (!isValid) {
-      throw new Error('Incorrect admin username or password.');
+      throw new Error('Invalid administrator credentials.');
     }
 
     const now = new Date().toISOString();
@@ -391,7 +351,7 @@ class Database {
       id: `aud-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       timestamp: new Date().toISOString(),
       action: 'ADMIN_PASSWORD_CHANGED',
-      adminEmail: admin.email || 'ali',
+      adminEmail: admin.email || 'alikka',
       targetUserEmail: admin.username,
       details: 'Administrator password was updated.'
     });
@@ -399,275 +359,18 @@ class Database {
     this.persist({ ...this.data });
   }
 
-  // ---------------- CUSTOMER ACCOUNT AUTHENTICATION & ISOLATION ----------------
-
   public getUserByUid(uid: string): UserAccount | undefined {
     return this.data.users.find((u) => u.uid === uid);
-  }
-
-  public getUserByUsername(username: string): UserAccount | undefined {
-    if (!username) return undefined;
-    const normalized = username.trim().toLowerCase();
-    return this.data.users.find((u) => u.username?.trim().toLowerCase() === normalized);
-  }
-
-  public getUserByEmail(email: string): UserAccount | undefined {
-    if (!email) return undefined;
-    const normalized = email.trim().toLowerCase();
-    return this.data.users.find((u) => u.email?.trim().toLowerCase() === normalized);
-  }
-
-  public registerCustomerAccount(params: {
-    username: string;
-    password: string;
-    confirmPassword?: string;
-    email?: string;
-  }): { user: SafeUserAccount; session: AuthSession; recoveryKey: string } {
-    const username = (params.username || '').trim();
-    const password = params.password || '';
-    const confirmPassword = params.confirmPassword;
-    const rawEmail = (params.email || '').trim().toLowerCase();
-
-    if (!username || username.length < 2) {
-      throw new Error('Please enter a name or username (at least 2 characters).');
-    }
-    if (!/^[a-zA-Z0-9_.\- ]+$/.test(username)) {
-      throw new Error('Username may only contain letters, numbers, spaces, underscores, dots, and hyphens.');
-    }
-    if (RESERVED_USERNAMES.has(username.toLowerCase())) {
-      throw new Error('This username is reserved. Please choose a different username.');
-    }
-
-    if (rawEmail) {
-      const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-      if (!emailRegex.test(rawEmail)) {
-        throw new Error('Please enter a valid recovery email address.');
-      }
-    }
-
-    if (!password || password.length < 6) {
-      throw new Error('Password must be at least 6 characters long.');
-    }
-    if (confirmPassword !== undefined && password !== confirmPassword) {
-      throw new Error('Passwords do not match. Please confirm your password.');
-    }
-
-    if (this.getUserByUsername(username)) {
-      throw new Error('This username is already taken. Please choose a different username or log in.');
-    }
-
-    const now = new Date().toISOString();
-    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
-    const { hash, salt } = hashPassword(password);
-
-    // One-time recovery key for password reset fallback
-    const recoveryKey = `AT-${crypto.randomBytes(2).toString('hex').toUpperCase()}-${crypto
-      .randomBytes(2)
-      .toString('hex')
-      .toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-    const recoveryHashed = hashPassword(recoveryKey);
-
-    const newUser: UserAccount = {
-      uid: userId,
-      username,
-      displayName: username,
-      email: rawEmail,
-      passwordHash: hash,
-      passwordSalt: salt,
-      recoveryKeyHash: recoveryHashed.hash,
-      recoveryKeySalt: recoveryHashed.salt,
-      createdAt: now,
-      lastLoginAt: now,
-      role: 'customer'
-    };
-
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    const newSession: AuthSession = {
-      token: sessionToken,
-      userId,
-      username,
-      role: 'customer',
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
-    };
-
-    this.data.users.push(newUser);
-    this.data.sessions.push(newSession);
-    this.persist({ ...this.data });
-
-    return {
-      user: sanitizeUser(newUser),
-      session: newSession,
-      recoveryKey
-    };
-  }
-
-  public loginCustomerAccount(params: {
-    username: string;
-    password: string;
-  }): { user: SafeUserAccount; session: AuthSession } {
-    const username = (params.username || '').trim();
-    const password = params.password || '';
-
-    if (!username || !password) {
-      throw new Error('Incorrect username or password. Please try again.');
-    }
-
-    const user = this.getUserByUsername(username);
-    // Reject missing user or admin user attempting login through customer portal
-    if (!user || user.role === 'admin') {
-      throw new Error('Incorrect username or password. Please try again.');
-    }
-
-    if (!user.passwordHash || !user.passwordSalt) {
-      throw new Error('Incorrect username or password. Please try again.');
-    }
-
-    const isValid = verifyPassword(password, user.passwordHash, user.passwordSalt);
-    if (!isValid) {
-      throw new Error('Incorrect username or password. Please try again.');
-    }
-
-    const now = new Date().toISOString();
-    user.lastLoginAt = now;
-
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    const newSession: AuthSession = {
-      token: sessionToken,
-      userId: user.uid,
-      username: user.username,
-      role: 'customer',
-      createdAt: now,
-      expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
-    };
-
-    this.data.sessions.push(newSession);
-    this.persist({ ...this.data });
-
-    return {
-      user: sanitizeUser(user),
-      session: newSession
-    };
-  }
-
-  public requestCustomerPasswordReset(params: {
-    username: string;
-    email?: string;
-  }): {
-    found: boolean;
-    canSendEmail: boolean;
-    email?: string;
-    code?: string;
-    username?: string;
-  } {
-    const username = (params.username || '').trim();
-    const user = this.getUserByUsername(username);
-    if (!user || user.role === 'admin') {
-      return { found: false, canSendEmail: false };
-    }
-
-    const targetEmail = (user.email || params.email || '').trim().toLowerCase();
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    // Only email code if the customer registered with an email (or has a request delivery email matching)
-    const userHasMatchingEmail = Boolean(user.email && emailRegex.test(user.email));
-    if (!userHasMatchingEmail && targetEmail && emailRegex.test(targetEmail)) {
-      const ownsRequestWithEmail = this.data.requests.some(
-        (r) => r.userId === user.uid && r.customerEmail?.toLowerCase() === targetEmail
-      );
-      if (ownsRequestWithEmail) {
-        user.email = targetEmail;
-      }
-    }
-
-    if (user.email && emailRegex.test(user.email)) {
-      const code = String(crypto.randomInt(100000, 999999));
-      const hashedCode = hashPassword(code);
-      user.resetCodeHash = `${hashedCode.salt}:${hashedCode.hash}`;
-      user.resetCodeExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      this.persist({ ...this.data });
-      return {
-        found: true,
-        canSendEmail: true,
-        email: user.email,
-        code,
-        username: user.username
-      };
-    }
-
-    return {
-      found: true,
-      canSendEmail: false,
-      username: user.username
-    };
-  }
-
-  public completeCustomerPasswordReset(params: {
-    username: string;
-    resetCodeOrKey: string;
-    newPassword: string;
-    confirmPassword: string;
-  }): void {
-    const username = (params.username || '').trim();
-    const codeOrKey = (params.resetCodeOrKey || '').trim();
-    const newPassword = params.newPassword || '';
-    const confirmPassword = params.confirmPassword || '';
-
-    const user = this.getUserByUsername(username);
-    if (!user || user.role === 'admin') {
-      throw new Error('Unable to verify recovery credentials.');
-    }
-    if (!codeOrKey) {
-      throw new Error('Please enter your Recovery Key or 6-digit email reset code.');
-    }
-    if (newPassword.length < 6) {
-      throw new Error('New password must be at least 6 characters long.');
-    }
-    if (newPassword !== confirmPassword) {
-      throw new Error('Passwords do not match.');
-    }
-
-    let verified = false;
-
-    // 1. Check 6-digit email OTP
-    if (user.resetCodeHash && user.resetCodeExpiresAt) {
-      if (new Date(user.resetCodeExpiresAt).getTime() > Date.now()) {
-        const [salt, hash] = user.resetCodeHash.split(':');
-        if (verifyPassword(codeOrKey, hash, salt)) {
-          verified = true;
-        }
-      }
-    }
-
-    // 2. Check one-time Recovery Key
-    if (!verified && user.recoveryKeyHash && user.recoveryKeySalt) {
-      if (verifyPassword(codeOrKey.toUpperCase(), user.recoveryKeyHash, user.recoveryKeySalt)) {
-        verified = true;
-      }
-    }
-
-    if (!verified) {
-      throw new Error('Invalid or expired recovery code / recovery key.');
-    }
-
-    const { hash, salt } = hashPassword(newPassword);
-    user.passwordHash = hash;
-    user.passwordSalt = salt;
-    user.resetCodeHash = undefined;
-    user.resetCodeExpiresAt = undefined;
-
-    // Revoke all old customer sessions
-    this.data.sessions = this.data.sessions.filter((s) => s.userId !== user.uid);
-    this.persist({ ...this.data });
   }
 
   public getSession(token: string): { session: AuthSession; user: SafeUserAccount } | null {
     if (!token) return null;
     const session = this.data.sessions.find(
-      (s) => s.token === token && new Date(s.expiresAt).getTime() > Date.now()
+      (s) => s.token === token && s.role === 'admin' && new Date(s.expiresAt).getTime() > Date.now()
     );
     if (!session) return null;
     const user = this.getUserByUid(session.userId);
-    if (!user) return null;
+    if (!user || user.role !== 'admin') return null;
     return {
       session,
       user: sanitizeUser(user)
@@ -684,13 +387,6 @@ class Database {
     this.persist({ ...this.data });
   }
 
-  public getAllUsers(): SafeUserAccount[] {
-    return [...this.data.users]
-      .filter((u) => u.role !== 'admin')
-      .map(sanitizeUser)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }
-
   public getAuditLogs(): AuditLog[] {
     return this.data.auditLogs;
   }
@@ -701,14 +397,6 @@ class Database {
     return [...this.data.requests].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }
-
-  public getUserRequests(uid: string): VideoRequest[] {
-    const cleanUid = (uid || '').trim();
-    if (!cleanUid) return [];
-    return this.data.requests
-      .filter((r) => r.userId === cleanUid)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   public getRequestById(id: string): VideoRequest | undefined {
@@ -744,11 +432,11 @@ class Database {
     const now = new Date().toISOString();
 
     const normalizedEmail = requestData.customerEmail.trim().toLowerCase();
-    const user = requestData.userId ? this.getUserByUid(requestData.userId) : undefined;
 
     const newRequest: VideoRequest = {
       ...requestData,
-      customerUsername: requestData.customerUsername || user?.username || requestData.customerName,
+      userId: requestData.userId || 'visitor',
+      userEmail: normalizedEmail,
       id: newId,
       accessToken,
       createdAt: now,
@@ -765,7 +453,7 @@ class Database {
         },
       payment: requestData.payment || { status: 'pending' },
       internalAdminNotes: [
-        `Submitted by customer ${requestData.customerUsername || user?.username || normalizedEmail} (Delivery Email: ${normalizedEmail}). The payment will be based on the video.`
+        `Submitted by customer ${requestData.customerName} (Delivery Email: ${normalizedEmail}). The payment will be based on the video.`
       ],
       statusHistory: [
         {

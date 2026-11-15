@@ -180,7 +180,7 @@ export const BudgetContactForm: React.FC<BudgetContactFormProps> = ({ onBackToHo
         throw new Error(
           fetchResult.data?.error ||
             fetchResult.error ||
-            'Error submitting request. Please ensure you are signed in and try again.'
+            'Error submitting request. Please check your details and try again.'
         );
       }
 

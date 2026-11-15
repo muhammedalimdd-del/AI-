@@ -30,7 +30,7 @@ export const PrivacyModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
 
           <h4 className="font-bold text-white text-sm">1. Customer Information We Collect</h4>
           <p>
-            When you submit a creative brief, we collect your account username, contact name, delivery email address, optional contact telephone number, project titles, character descriptions, scene layouts, and any reference photos you choose to provide.
+            When you submit a creative brief, we collect your contact name, delivery email address, optional contact telephone number, project titles, character descriptions, scene layouts, and any reference photos you choose to provide.
           </p>
 
           <h4 className="font-bold text-white text-sm">2. Use of Reference Photos &amp; Likenesses</h4>
@@ -239,7 +239,7 @@ export const ContactModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
       });
 
       if (!res.ok) {
-        setSubmitError(res.data?.error || res.error || 'Please sign in to submit an inquiry.');
+        setSubmitError(res.data?.error || res.error || 'Unable to submit inquiry. Please check your details and try again.');
         return;
       }
 

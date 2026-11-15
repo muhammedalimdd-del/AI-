@@ -9,10 +9,17 @@ import {
   Download,
   ArrowLeft,
   MessageSquare,
-  ExternalLink
+  ExternalLink,
+  CreditCard,
+  XCircle
 } from 'lucide-react';
 import { safeFetchJson } from '../services/apiClient.ts';
-import { getAuthHeaders } from '../services/deviceIdentity.ts';
+import {
+  getAuthHeaders,
+  getSubmittedReceipts,
+  saveSubmittedReceipt,
+  SubmittedReceipt
+} from '../services/deviceIdentity.ts';
 
 interface CustomerTrackerProps {
   initialRequestId?: string;
@@ -30,6 +37,16 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requestData, setRequestData] = useState<any | null>(null);
+  const [recentReceipts, setRecentReceipts] = useState<SubmittedReceipt[]>(() =>
+    getSubmittedReceipts()
+  );
+
+  // Quote accept / decline state
+  const [quoteActionLoading, setQuoteActionLoading] = useState<'accept' | 'decline' | null>(null);
+  const [quoteActionNotice, setQuoteActionNotice] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   // Customer clarification response state
   const [replyMessage, setReplyMessage] = useState('');
@@ -72,11 +89,60 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
       }
 
       setRequestData(result.data.request);
+      saveSubmittedReceipt({
+        id: result.data.request.id,
+        accessToken: result.data.request.accessToken || '',
+        title: result.data.request.title || 'Custom Video Request',
+        customerEmail: result.data.request.customerEmail || '',
+        createdAt: result.data.request.createdAt || new Date().toISOString()
+      });
+      setRecentReceipts(getSubmittedReceipts());
     } catch (e: any) {
       setError(e.message || 'Failed to locate request.');
       setRequestData(null);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleQuoteAction = async (action: 'accept' | 'decline') => {
+    if (!requestData || quoteActionLoading) return;
+    setQuoteActionLoading(action);
+    setQuoteActionNotice(null);
+
+    try {
+      const result = await safeFetchJson<{ request?: any; error?: string }>(
+        `/api/requests/${requestData.id}/quote-action`,
+        {
+          method: 'POST',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            action,
+            token: requestData.accessToken,
+            customerEmail: requestData.customerEmail
+          })
+        }
+      );
+
+      if (!result.ok || !result.data?.request) {
+        throw new Error(result.data?.error || result.error || 'Could not update quote response.');
+      }
+
+      setRequestData(result.data.request);
+      setQuoteActionNotice({
+        type: 'success',
+        text:
+          action === 'accept'
+            ? 'Quote accepted! We will verify payment and begin production shortly.'
+            : 'Quote declined. The studio team has been notified.'
+      });
+    } catch (e: any) {
+      setQuoteActionNotice({
+        type: 'error',
+        text: e.message || 'Failed to respond to quote.'
+      });
+    } finally {
+      setQuoteActionLoading(null);
     }
   };
 
@@ -107,7 +173,7 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
 
       setReplyMessage('');
       setReplySuccess('Your reply has been forwarded directly to the studio director!');
-      handleLookup(requestData.id, requestData.accessToken);
+      handleLookup(requestData.id, requestData.accessToken || requestData.customerEmail);
     } catch (e: any) {
       setReplyError(e.message || 'Error submitting response.');
     } finally {
@@ -237,6 +303,33 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
             <span>{error}</span>
           </div>
         )}
+
+        {/* Recent Requests on This Browser */}
+        {recentReceipts.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-slate-800/80">
+            <p className="text-[11px] uppercase font-bold tracking-wider text-slate-400 mb-2">
+              Recent Requests Submitted From This Browser
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {recentReceipts.map((rec) => (
+                <button
+                  key={rec.id}
+                  type="button"
+                  onClick={() => {
+                    const key = rec.accessToken || rec.customerEmail;
+                    setRequestId(rec.id);
+                    setEmailOrToken(key);
+                    handleLookup(rec.id, key);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#0C1220] hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/60 text-xs text-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
+                >
+                  <span className="font-mono font-bold text-indigo-400">{rec.id}</span>
+                  <span className="text-slate-400 truncate max-w-[160px]">{rec.title}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Request Details View */}
@@ -318,6 +411,106 @@ export const CustomerTracker: React.FC<CustomerTrackerProps> = ({
               </div>
             </div>
           </div>
+
+          {/* CUSTOM QUOTE APPROVAL PANEL */}
+          {requestData.quote && (
+            <div className="rounded-2xl bg-gradient-to-b from-indigo-950/50 to-[#090D16] border border-indigo-700/70 p-6 sm:p-8 space-y-4 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-800/40">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-indigo-900/60 text-indigo-300">
+                    <CreditCard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-white">Custom Studio Quote</h4>
+                    <p className="text-xs text-slate-400">The payment will be based on the video.</p>
+                  </div>
+                </div>
+                <span
+                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase ${
+                    requestData.quote.status === 'accepted'
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                      : requestData.quote.status === 'declined'
+                      ? 'bg-rose-950 text-rose-300 border border-rose-700'
+                      : 'bg-cyan-950 text-cyan-300 border border-cyan-700'
+                  }`}
+                >
+                  {requestData.quote.status === 'accepted'
+                    ? 'Accepted'
+                    : requestData.quote.status === 'declined'
+                    ? 'Declined'
+                    : 'Awaiting Your Response'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="p-3.5 rounded-xl bg-[#0C1220] border border-slate-800">
+                  <span className="text-slate-400 block mb-1">Proposed Production Cost:</span>
+                  <span className="text-2xl font-black text-white">
+                    {requestData.quote.formattedAmount || `${requestData.quote.currency || ''}${requestData.quote.amount}`}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-[#0C1220] border border-slate-800">
+                  <span className="text-slate-400 block mb-1">Scope &amp; Deliverables:</span>
+                  <span className="text-slate-200 leading-relaxed block">
+                    {requestData.quote.breakdown || 'Custom AI video production and final delivery.'}
+                  </span>
+                </div>
+              </div>
+
+              {quoteActionNotice && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                    quoteActionNotice.type === 'success'
+                      ? 'bg-emerald-950/60 border-emerald-700 text-emerald-200'
+                      : 'bg-rose-950/60 border-rose-700 text-rose-200'
+                  }`}
+                >
+                  {quoteActionNotice.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{quoteActionNotice.text}</span>
+                </div>
+              )}
+
+              {requestData.quote.status === 'sent' && (
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    disabled={quoteActionLoading !== null}
+                    onClick={() => handleQuoteAction('accept')}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold text-xs flex items-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{quoteActionLoading === 'accept' ? 'Accepting...' : 'Accept Custom Quote'}</span>
+                  </button>
+
+                  {requestData.quote.paymentLink && (
+                    <a
+                      href={requestData.quote.paymentLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>Open Payment Link</span>
+                    </a>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={quoteActionLoading !== null}
+                    onClick={() => handleQuoteAction('decline')}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950 border border-slate-700 hover:border-rose-800 disabled:opacity-60 text-slate-300 hover:text-rose-200 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>{quoteActionLoading === 'decline' ? 'Declining...' : 'Decline Quote'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* COMPLETED VIDEO DELIVERY SECTION */}
           {(requestData.completedVideo?.directLink || requestData.completedVideo?.downloadUrl || requestData.completedVideo?.url) && (

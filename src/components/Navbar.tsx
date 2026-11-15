@@ -1,45 +1,31 @@
 import React, { useState } from 'react';
 import { AiVideoCameraLogo } from './Brand/AiVideoCameraLogo.tsx';
-import { UserAccount } from '../types/client.ts';
 import {
   Sparkles,
   Menu,
   X,
   Clock,
-  LogOut,
-  User as UserIcon,
-  ChevronDown,
   Download
 } from 'lucide-react';
 import { isRunningInElectron } from '../services/desktopBridge.ts';
 
 interface NavbarProps {
-  currentUser: UserAccount | null;
   onNavigate: (sectionId: string) => void;
   onRequestClick: () => void;
   onTrackClick: () => void;
-  onMyRequestsClick: () => void;
-  onProfileClick?: () => void;
   onContactClick: () => void;
   onBudgetContactClick: () => void;
   onDownloadAppClick?: () => void;
-  onSignInClick: () => void;
-  onSignOutClick: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  currentUser,
   onNavigate,
   onRequestClick,
-  onMyRequestsClick,
-  onProfileClick,
+  onTrackClick,
   onBudgetContactClick,
-  onDownloadAppClick,
-  onSignInClick,
-  onSignOutClick
+  onDownloadAppClick
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
   const handleNav = (id: string) => {
     onNavigate(id);
@@ -77,15 +63,13 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             Video Styles
           </button>
-          {currentUser && (
-            <button
-              onClick={onMyRequestsClick}
-              className="flex items-center gap-1.5 text-indigo-300 hover:text-white transition-colors cursor-pointer py-1 font-semibold"
-            >
-              <Clock className="w-4 h-4 text-indigo-400" />
-              <span>My Requests</span>
-            </button>
-          )}
+          <button
+            onClick={onTrackClick}
+            className="flex items-center gap-1.5 text-indigo-300 hover:text-white transition-colors cursor-pointer py-1 font-semibold"
+          >
+            <Clock className="w-4 h-4 text-indigo-400" />
+            <span>Track Request</span>
+          </button>
           <button
             onClick={onBudgetContactClick}
             className="flex items-center gap-1.5 text-cyan-300 hover:text-white transition-colors cursor-pointer py-1 font-semibold"
@@ -110,107 +94,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </nav>
 
-        {/* Right CTA / Profile */}
+        {/* Right Primary CTA */}
         <div className="hidden md:flex items-center gap-3">
-          {currentUser ? (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setUserDropdownOpen(!userDropdownOpen)}
-                className="flex items-center gap-2.5 p-1.5 pr-3 rounded-full bg-[#0D1322] border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
-              >
-                <div className="w-7 h-7 rounded-full bg-indigo-900/60 text-indigo-300 flex items-center justify-center font-bold text-xs">
-                  {(currentUser.username || currentUser.displayName || 'U')[0].toUpperCase()}
-                </div>
-                <div className="text-left hidden xl:block leading-tight max-w-[140px] truncate">
-                  <span className="text-xs font-bold text-white block truncate">
-                    {currentUser.displayName || currentUser.username}
-                  </span>
-                  <span className="text-[10px] text-slate-400 block truncate font-mono">
-                    @{currentUser.username}
-                  </span>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-
-              {/* User Dropdown */}
-              {userDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-[#090D16] border border-slate-800 shadow-2xl p-2 z-50 text-xs animate-fadeIn">
-                  <div className="p-3 border-b border-slate-800 mb-1">
-                    <p className="font-bold text-white text-sm truncate">
-                      {currentUser.displayName || currentUser.username}
-                    </p>
-                    <p className="text-slate-400 font-mono text-[11px] truncate mt-0.5">
-                      @{currentUser.username}
-                    </p>
-                    <div className="mt-2">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-950/70 text-indigo-300 border border-indigo-800/60">
-                        Customer Account
-                      </span>
-                    </div>
-                  </div>
-
-                  {onProfileClick && (
-                    <button
-                      onClick={() => {
-                        setUserDropdownOpen(false);
-                        onProfileClick();
-                      }}
-                      className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 text-left text-slate-200 hover:text-white flex items-center gap-2 font-medium cursor-pointer"
-                    >
-                      <UserIcon className="w-4 h-4 text-cyan-400" />
-                      <span>My Profile</span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      setUserDropdownOpen(false);
-                      onMyRequestsClick();
-                    }}
-                    className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 text-left text-slate-200 hover:text-white flex items-center gap-2 font-medium cursor-pointer"
-                  >
-                    <Clock className="w-4 h-4 text-indigo-400" />
-                    <span>My Video Requests</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setUserDropdownOpen(false);
-                      onRequestClick();
-                    }}
-                    className="w-full p-2.5 rounded-xl hover:bg-slate-800/80 text-left text-slate-200 hover:text-white flex items-center gap-2 font-medium cursor-pointer"
-                  >
-                    <Sparkles className="w-4 h-4 text-purple-400" />
-                    <span>Create AI Video</span>
-                  </button>
-
-                  <div className="pt-1 mt-1 border-t border-slate-800">
-                    <button
-                      onClick={() => {
-                        setUserDropdownOpen(false);
-                        onSignOutClick();
-                      }}
-                      className="w-full p-2.5 rounded-xl hover:bg-rose-950/40 text-left text-rose-300 flex items-center gap-2 font-medium cursor-pointer"
-                    >
-                      <LogOut className="w-4 h-4 text-rose-400" />
-                      <span>Sign Out</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={onSignInClick}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-indigo-500/60 flex items-center gap-2 transition-all shadow-md shadow-black/40 cursor-pointer"
-            >
-              <UserIcon className="w-4 h-4 text-cyan-400" />
-              <span>Log In</span>
-            </button>
-          )}
-
-          {/* Primary CTA */}
           <button
             onClick={onRequestClick}
             className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 hover:shadow-lg hover:shadow-indigo-600/30 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer flex items-center gap-2"
@@ -234,29 +119,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="md:hidden bg-[#070B14] border-b border-slate-800 px-4 pt-3 pb-6 space-y-3 animate-fadeIn">
-          {currentUser && (
-            <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 mb-2">
-              <p className="font-bold text-white text-sm">
-                {currentUser.displayName || currentUser.username}
-              </p>
-              <p className="text-slate-400 text-xs font-mono">@{currentUser.username}</p>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase text-indigo-300">
-                  Customer Account
-                </span>
-                <button
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    onSignOutClick();
-                  }}
-                  className="text-xs text-rose-400 font-semibold"
-                >
-                  Sign Out
-                </button>
-              </div>
-            </div>
-          )}
-
           <button
             onClick={() => handleNav('hero')}
             className="w-full text-left py-2 text-sm text-slate-300 font-medium hover:text-white"
@@ -275,17 +137,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             Video Styles
           </button>
-          {currentUser && (
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onMyRequestsClick();
-              }}
-              className="w-full text-left py-2 text-sm text-indigo-400 font-semibold hover:text-white"
-            >
-              My Video Requests
-            </button>
-          )}
+          <button
+            onClick={() => {
+              setMobileMenuOpen(false);
+              onTrackClick();
+            }}
+            className="w-full text-left py-2 text-sm text-indigo-400 font-semibold hover:text-white"
+          >
+            Track Request
+          </button>
           <button
             onClick={() => {
               setMobileMenuOpen(false);

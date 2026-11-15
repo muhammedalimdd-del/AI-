@@ -1,5 +1,5 @@
 import React from 'react';
-import { RequestFormData, UserAccount } from '../../types/client.ts';
+import { RequestFormData } from '../../types/client.ts';
 import { Mail, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
 interface Step7Props {
@@ -7,15 +7,13 @@ interface Step7Props {
   updateData: (fields: Partial<RequestFormData>) => void;
   onOpenPrivacy: () => void;
   onOpenTerms: () => void;
-  currentUser?: UserAccount | null;
 }
 
 export const Step7CustomerDelivery: React.FC<Step7Props> = ({
   data,
   updateData,
   onOpenPrivacy,
-  onOpenTerms,
-  currentUser
+  onOpenTerms
 }) => {
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((data.customerEmail || '').trim()) &&
     !(data.customerEmail || '').trim().toLowerCase().endsWith('@aivideomaker.local');
@@ -65,11 +63,6 @@ export const Step7CustomerDelivery: React.FC<Step7Props> = ({
             className="w-full px-4 py-3 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm transition-all"
             required
           />
-          {currentUser?.username && (
-            <p className="text-[11px] text-slate-500 mt-1">
-              Signed in as customer account: <span className="text-indigo-400 font-mono">@{currentUser.username}</span>
-            </p>
-          )}
         </div>
 
         {/* Mandatory Email Address for Video Delivery */}

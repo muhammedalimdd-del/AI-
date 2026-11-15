@@ -13,26 +13,22 @@ export interface AuthSession {
   token: string;
   userId: string;
   username: string;
-  role: 'customer' | 'admin';
+  role: 'admin';
   createdAt: string;
   expiresAt: string;
 }
 
 export interface UserAccount {
-  uid: string; // User ID
-  username: string; // Unique username
-  email: string; // Optional customer recovery/contact email
+  uid: string;
+  username: string; // 'alikka' for private admin
+  email: string;
   displayName: string;
   passwordHash?: string; // Salted scrypt hash
   passwordSalt?: string; // Cryptographic salt
-  recoveryKeyHash?: string; // Salted scrypt hash for one-time recovery key
-  recoveryKeySalt?: string;
-  resetCodeHash?: string; // Salted hash for email OTP reset
-  resetCodeExpiresAt?: string;
   photoURL?: string;
   createdAt: string;
   lastLoginAt: string;
-  role: 'customer' | 'admin';
+  role: 'admin';
 }
 
 export interface AuditLog {

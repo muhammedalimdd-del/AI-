@@ -10,7 +10,7 @@ import { AuthSession, BudgetRequestStatus } from './src/server/types.ts';
 
 dotenv.config();
 
-// Initialize private owner admin account ("ali") from server-side environment variable
+// Initialize private owner admin account ("alikka") from server-side environment variable
 db.initAdminAccount(process.env.ADMIN_PASSWORD);
 
 const app = express();
@@ -104,31 +104,27 @@ interface AuthenticatedRequest extends express.Request {
   sessionToken?: string;
 }
 
-// Middleware: verified authenticated user (customer or admin)
-function requireAuth(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+function getValidAdminSession(req: express.Request): {
+  session: AuthSession;
+  user: SafeUserAccount;
+  token: string;
+} | null {
   const token = extractSessionToken(req);
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized: Please log in to continue.' });
-  }
+  if (!token) return null;
   const resolved = db.getSession(token);
-  if (!resolved) {
-    return res.status(401).json({ error: 'Unauthorized: Session expired or invalid. Please log in again.' });
-  }
-  req.authSession = resolved.session;
-  req.authUser = resolved.user;
-  req.sessionToken = token;
-  return next();
+  if (!resolved || resolved.user.role !== 'admin') return null;
+  return { ...resolved, token };
 }
 
 // Middleware: strict private admin check (requires verified opaque session with role === 'admin')
 function requireAdmin(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
   const token = extractSessionToken(req);
   if (!token) {
-    return res.status(401).json({ error: 'Unauthorized: Admin authentication required.' });
+    return res.status(401).json({ error: 'Unauthorized: Administrator authentication required.' });
   }
   const resolved = db.getSession(token);
   if (!resolved) {
-    return res.status(401).json({ error: 'Unauthorized: Invalid or expired admin session.' });
+    return res.status(401).json({ error: 'Unauthorized: Invalid or expired administrator session.' });
   }
   if (resolved.user.role !== 'admin') {
     return res.status(403).json({ error: 'Forbidden: Administrator access required.' });
@@ -236,164 +232,23 @@ app.get('/downloads/:filename', (req, res) => {
   return res.sendFile(filePath);
 });
 
-// ================= CUSTOMER AUTHENTICATION API ROUTES =================
-
-// Register new customer account (username + password + confirmPassword, optional recovery email)
-const handleCustomerRegister = (req: express.Request, res: express.Response) => {
-  try {
-    const { username, password, confirmPassword, email } = req.body || {};
-    const result = db.registerCustomerAccount({
-      username,
-      password,
-      confirmPassword,
-      email
-    });
-
-    res.status(201).json({
-      success: true,
-      user: result.user,
-      token: result.session.token,
-      recoveryKey: result.recoveryKey,
-      message: 'Account created successfully.'
-    });
-  } catch (err: any) {
-    const isConflict =
-      err.message &&
-      (err.message.includes('already taken') || err.message.includes('reserved'));
-    res.status(isConflict ? 409 : 400).json({
-      error: err.message || 'Failed to create account.'
-    });
-  }
-};
-app.post('/api/auth/register', handleCustomerRegister);
-app.post('/api/register', handleCustomerRegister);
-
-// Customer Login (username + password only; never auto-creates accounts)
-const handleCustomerLogin = (req: express.Request, res: express.Response) => {
-  try {
-    const { username, password } = req.body || {};
-    const result = db.loginCustomerAccount({ username, password });
-
-    res.json({
-      success: true,
-      user: result.user,
-      token: result.session.token
-    });
-  } catch (err: any) {
-    res.status(401).json({
-      error: err.message || 'Incorrect username or password. Please try again.'
-    });
-  }
-};
-app.post('/api/auth/login', handleCustomerLogin);
-app.post('/api/login', handleCustomerLogin);
-
-// Password Reset Step 1: Request reset code (via registered email if available, or confirm recovery key fallback)
-app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const { username, email } = req.body || {};
-    if (!username || !String(username).trim()) {
-      return res.status(400).json({ error: 'Please enter your username.' });
-    }
-
-    const result = db.requestCustomerPasswordReset({ username: String(username), email });
-    if (result.canSendEmail && result.email && result.code && result.username) {
-      await emailService
-        .sendPasswordResetCode(result.email, result.username, result.code)
-        .catch((err) => console.error('Failed to send reset code email:', err));
-
-      return res.json({
-        success: true,
-        method: 'email_or_key',
-        message: 'If a recovery email is linked to this username, a 6-digit verification code has been sent. You may also use your personal Recovery Key.'
-      });
-    }
-
-    return res.json({
-      success: true,
-      method: 'recovery_key',
-      message: 'Enter your personal Recovery Key (provided when you created your account) to set a new password.'
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to initiate password reset.' });
-  }
-});
-
-// Password Reset Step 2: Verify OTP or Recovery Key and set new password
-app.post('/api/auth/reset-password', (req, res) => {
-  try {
-    const { username, resetCodeOrKey, newPassword, confirmPassword } = req.body || {};
-    db.completeCustomerPasswordReset({
-      username,
-      resetCodeOrKey,
-      newPassword,
-      confirmPassword
-    });
-    res.json({
-      success: true,
-      message: 'Password updated successfully. You can now log in with your new password.'
-    });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Password reset failed.' });
-  }
-});
-
-// Validate Current Session (GET and POST supported)
-const handleSessionCheck = (req: express.Request, res: express.Response) => {
-  try {
-    const headerToken = extractSessionToken(req);
-    const token = headerToken || (req.body?.token as string) || (req.query?.token as string) || '';
-
-    if (!token) {
-      return res.status(401).json({ error: 'No active session token provided.' });
-    }
-
-    const resolved = db.getSession(token);
-    if (!resolved) {
-      return res.status(401).json({ error: 'Session expired or invalid.' });
-    }
-
-    res.json({
-      success: true,
-      user: resolved.user
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-};
-app.get('/api/auth/session', handleSessionCheck);
-app.post('/api/auth/session', handleSessionCheck);
-
-// Sign Out (Session revocation)
-app.post('/api/auth/logout', (req, res) => {
-  try {
-    const token = extractSessionToken(req);
-    if (token) {
-      db.revokeSession(token);
-    }
-    res.json({
-      success: true,
-      message: 'Signed out successfully.'
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Authenticated User Profile
-app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res) => {
-  res.json({
-    success: true,
-    user: req.authUser
-  });
-});
-
 // ================= MEDIA & UPLOAD ROUTES =================
 
-// Secure file upload (requires authenticated customer or admin session)
-app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
+// Reference photo upload (open to visitors) and completed video upload (admin only)
+app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const isVideoUpload =
+    req.file.mimetype.startsWith('video/') ||
+    /\.(mp4|mov|webm)$/i.test(req.file.originalname);
+
+  if (isVideoUpload && !getValidAdminSession(req)) {
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch {}
+    return res.status(401).json({ error: 'Unauthorized: Administrator authentication required for video uploads.' });
   }
 
   const fileUrl = `/api/media/${req.file.filename}`;
@@ -419,12 +274,11 @@ app.get('/api/media/:filename', (req, res) => {
   res.sendFile(filePath);
 });
 
-// ================= VIDEO REQUEST ROUTES (ISOLATED PER CUSTOMER) =================
+// ================= VIDEO REQUEST ROUTES (OPEN CUSTOMER ACCESS) =================
 
-// Create Video Request (Authenticated Customer Only — Paid Video-Based Workflow)
-app.post('/api/requests', requireAuth, async (req: AuthenticatedRequest, res) => {
+// Create Video Request (Open to customers without customer accounts — Paid Video-Based Workflow)
+app.post('/api/requests', async (req, res) => {
   try {
-    const authUser = req.authUser!;
     const {
       title,
       videoType,
@@ -478,8 +332,8 @@ app.post('/api/requests', requireAuth, async (req: AuthenticatedRequest, res) =>
       return res.status(400).json({ error: 'You must agree to the Terms and Privacy Policy.' });
     }
 
-    // Prevent duplicate rapid submissions (within 30 seconds for the same user + title)
-    const recentDuplicate = db.getUserRequests(authUser.uid).find(
+    // Prevent duplicate rapid submissions (within 30 seconds for the same delivery email + title)
+    const recentDuplicate = db.getAllRequests().find(
       (r) =>
         r.customerEmail.toLowerCase() === finalCustomerEmail &&
         r.title.trim().toLowerCase() === title.trim().toLowerCase() &&
@@ -502,9 +356,8 @@ app.post('/api/requests', requireAuth, async (req: AuthenticatedRequest, res) =>
     }
 
     const created = db.createRequest({
-      userId: authUser.uid,
-      userEmail: authUser.email || finalCustomerEmail,
-      customerUsername: authUser.username,
+      userId: 'visitor',
+      userEmail: finalCustomerEmail,
       title: title.trim(),
       videoType: videoType || 'Custom AI Video',
       purpose: purpose || 'Entertainment',
@@ -581,16 +434,7 @@ app.post('/api/requests', requireAuth, async (req: AuthenticatedRequest, res) =>
   }
 });
 
-// Get Customer Requests (Strictly isolated to authenticated user UID)
-app.get('/api/user/requests', requireAuth, (req: AuthenticatedRequest, res) => {
-  const requests = db.getUserRequests(req.authUser!.uid);
-  res.json({
-    success: true,
-    requests
-  });
-});
-
-// Track Video Request (POST: requires authenticated owner/admin OR matching secret accessToken)
+// Track Video Request (POST: verifies matching delivery email or secret accessToken, or valid admin session)
 app.post('/api/requests/track', (req, res) => {
   try {
     const { requestId, emailOrToken } = req.body || {};
@@ -606,28 +450,18 @@ app.post('/api/requests/track', (req, res) => {
       return res.status(404).json({ error: 'Request not found with this ID.' });
     }
 
-    const sessionToken = extractSessionToken(req);
-    const resolvedSession = sessionToken ? db.getSession(sessionToken) : null;
-
-    if (resolvedSession) {
-      const isAdmin = resolvedSession.user.role === 'admin';
-      const isOwner = request.userId === resolvedSession.user.uid;
-      if (!isAdmin && !isOwner) {
-        return res.status(403).json({ error: 'Access denied: This request belongs to another customer account.' });
-      }
-      if (key) {
-        const isEmailMatch = request.customerEmail.toLowerCase() === key;
-        const isTokenMatch = request.accessToken.toLowerCase() === key;
-        if (!isEmailMatch && !isTokenMatch) {
-          return res.status(403).json({ error: 'Verification failed. Email or Access Token does not match.' });
-        }
-      }
+    if (getValidAdminSession(req)) {
       return res.json({ success: true, request });
     }
 
-    // Unauthenticated lookup requires secret accessToken
-    if (!key || request.accessToken.toLowerCase() !== key) {
-      return res.status(401).json({ error: 'Please log in or provide your valid secret Access Token.' });
+    if (!key) {
+      return res.status(401).json({ error: 'Please provide your delivery email address or tracking token.' });
+    }
+
+    const isEmailMatch = request.customerEmail.toLowerCase() === key;
+    const isTokenMatch = request.accessToken.toLowerCase() === key;
+    if (!isEmailMatch && !isTokenMatch) {
+      return res.status(403).json({ error: 'Verification failed. Email or Access Token does not match.' });
     }
 
     return res.json({ success: true, request });
@@ -636,39 +470,32 @@ app.post('/api/requests/track', (req, res) => {
   }
 });
 
-// Get Video Request by ID (Strictly isolated: owner, admin, or valid accessToken)
+// Get Video Request by ID (verifies matching accessToken or admin session)
 app.get('/api/requests/:id', (req, res) => {
   const id = req.params.id;
-  const queryToken = String(req.query.token || '').trim();
-  const sessionToken = extractSessionToken(req);
-  const resolvedSession = sessionToken ? db.getSession(sessionToken) : null;
+  const queryToken = String(req.query.token || '').trim().toLowerCase();
 
   const request = db.getRequestById(id);
   if (!request) {
     return res.status(404).json({ error: 'Request not found' });
   }
 
-  if (queryToken && request.accessToken.toLowerCase() === queryToken.toLowerCase()) {
+  if (queryToken && request.accessToken.toLowerCase() === queryToken) {
     return res.json({ success: true, request });
   }
 
-  if (resolvedSession) {
-    const isAdmin = resolvedSession.user.role === 'admin';
-    const isOwner = request.userId === resolvedSession.user.uid;
-    if (isAdmin || isOwner) {
-      return res.json({ success: true, request });
-    }
-    return res.status(403).json({ error: 'Access denied: You do not have permission to view this request.' });
+  if (getValidAdminSession(req)) {
+    return res.json({ success: true, request });
   }
 
-  return res.status(401).json({ error: 'Unauthorized: Please log in to view your video request.' });
+  return res.status(401).json({ error: 'Unauthorized: Valid tracking token required to view request details.' });
 });
 
-// Customer Quote Action (Accept / Decline) — Strictly owner or admin
-app.post('/api/requests/:id/quote-action', requireAuth, (req: AuthenticatedRequest, res) => {
+// Customer Quote Action (Accept / Decline) — verified via secret token, delivery email, or admin
+app.post('/api/requests/:id/quote-action', (req, res) => {
   try {
     const id = req.params.id;
-    const { action, customerEmail } = req.body || {};
+    const { action, customerEmail, token } = req.body || {};
 
     if (!['accept', 'decline'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action. Must be accept or decline.' });
@@ -678,11 +505,21 @@ app.post('/api/requests/:id/quote-action', requireAuth, (req: AuthenticatedReque
     if (!request) {
       return res.status(404).json({ error: 'Request not found.' });
     }
-    if (req.authUser!.role !== 'admin' && request.userId !== req.authUser!.uid) {
-      return res.status(403).json({ error: 'Forbidden: You cannot act on another customer\'s quote.' });
+
+    const isAdmin = Boolean(getValidAdminSession(req));
+    const isTokenMatch = Boolean(
+      token && request.accessToken.toLowerCase() === String(token).trim().toLowerCase()
+    );
+    const isEmailMatch = Boolean(
+      customerEmail &&
+        request.customerEmail.toLowerCase() === String(customerEmail).trim().toLowerCase()
+    );
+
+    if (!isAdmin && !isTokenMatch && !isEmailMatch) {
+      return res.status(403).json({ error: 'Verification failed. Valid tracking token or delivery email is required.' });
     }
 
-    const updated = db.respondToQuote(id, action, customerEmail || req.authUser!.username);
+    const updated = db.respondToQuote(id, action, customerEmail || request.customerEmail);
     if (!updated) {
       return res.status(404).json({ error: 'Request not found or no quote available.' });
     }
@@ -696,11 +533,11 @@ app.post('/api/requests/:id/quote-action', requireAuth, (req: AuthenticatedReque
   }
 });
 
-// Customer Clarification Message — Strictly owner or admin
-app.post('/api/requests/:id/customer-message', requireAuth, async (req: AuthenticatedRequest, res) => {
+// Customer Clarification Message — verified via secret token, delivery email, or admin
+app.post('/api/requests/:id/customer-message', async (req, res) => {
   try {
     const id = req.params.id;
-    const { message } = req.body || {};
+    const { message, token, email, customerEmail } = req.body || {};
 
     if (!message || !String(message).trim()) {
       return res.status(400).json({ error: 'Message cannot be empty.' });
@@ -710,8 +547,18 @@ app.post('/api/requests/:id/customer-message', requireAuth, async (req: Authenti
     if (!request) {
       return res.status(404).json({ error: 'Request not found.' });
     }
-    if (req.authUser!.role !== 'admin' && request.userId !== req.authUser!.uid) {
-      return res.status(403).json({ error: 'Forbidden: You cannot message on another customer\'s request.' });
+
+    const isAdmin = Boolean(getValidAdminSession(req));
+    const isTokenMatch = Boolean(
+      token && request.accessToken.toLowerCase() === String(token).trim().toLowerCase()
+    );
+    const providedEmail = String(email || customerEmail || '').trim().toLowerCase();
+    const isEmailMatch = Boolean(
+      providedEmail && request.customerEmail.toLowerCase() === providedEmail
+    );
+
+    if (!isAdmin && !isTokenMatch && !isEmailMatch) {
+      return res.status(403).json({ error: 'Verification failed. Valid tracking token or delivery email is required.' });
     }
 
     const updated = db.addCustomerClarification(id, String(message).trim());
@@ -724,12 +571,15 @@ app.post('/api/requests/:id/customer-message', requireAuth, async (req: Authenti
   }
 });
 
-// GDPR / Data Erasure Request — Strictly owner or admin
-app.post('/api/privacy/delete-request', requireAuth, (req: AuthenticatedRequest, res) => {
+// GDPR / Data Erasure Request (verifies delivery email match, or admin)
+app.post('/api/privacy/delete-request', (req, res) => {
   try {
     const { email, requestId } = req.body || {};
-    if (!email && !requestId) {
-      return res.status(400).json({ error: 'Email or Request ID is required for data deletion.' });
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const isAdmin = Boolean(getValidAdminSession(req));
+
+    if (!cleanEmail && !(isAdmin && requestId)) {
+      return res.status(400).json({ error: 'Delivery email address is required for data deletion.' });
     }
 
     if (requestId) {
@@ -737,15 +587,14 @@ app.post('/api/privacy/delete-request', requireAuth, (req: AuthenticatedRequest,
       if (!target) {
         return res.json({ success: true, message: 'No matching records found for deletion.' });
       }
-      if (req.authUser!.role !== 'admin' && target.userId !== req.authUser!.uid) {
-        return res.status(403).json({ error: 'Forbidden: You can only delete your own requests.' });
+      if (!isAdmin && target.customerEmail.toLowerCase() !== cleanEmail) {
+        return res.status(403).json({ error: 'Verification failed: Email address does not match this Request ID.' });
       }
       db.deleteVideoRequest(String(requestId));
-    } else if (email) {
-      const userRequests = db.getUserRequests(req.authUser!.uid);
-      const matching = userRequests.filter(
-        (r) => r.customerEmail.toLowerCase() === String(email).trim().toLowerCase()
-      );
+    } else if (cleanEmail) {
+      const matching = db
+        .getAllRequests()
+        .filter((r) => r.customerEmail.toLowerCase() === cleanEmail);
       for (const r of matching) {
         db.deleteVideoRequest(r.id);
       }
@@ -760,8 +609,8 @@ app.post('/api/privacy/delete-request', requireAuth, (req: AuthenticatedRequest,
   }
 });
 
-// Budget / Idea Request Submission (Authenticated Customer — No Free Option, Video-Based Payment)
-app.post('/api/budget-requests', requireAuth, async (req: AuthenticatedRequest, res) => {
+// Budget / Idea Request Submission (Open to visitors — No Free Option, Video-Based Payment)
+app.post('/api/budget-requests', async (req, res) => {
   try {
     const {
       fullName,
@@ -877,10 +726,10 @@ app.post('/api/budget-requests', requireAuth, async (req: AuthenticatedRequest, 
   }
 });
 
-// Request Email Notification via Resend (Authenticated owner or admin)
-const handleSendRequestNotificationEmail = async (req: AuthenticatedRequest, res: express.Response) => {
+// Request Email Notification via Resend (verified via admin session or matching request accessToken)
+const handleSendRequestNotificationEmail = async (req: express.Request, res: express.Response) => {
   try {
-    const { requestId, forceRetry } = req.body || {};
+    const { requestId, forceRetry, token } = req.body || {};
     if (!requestId || typeof requestId !== 'string') {
       return res.status(400).json({
         success: false,
@@ -888,14 +737,18 @@ const handleSendRequestNotificationEmail = async (req: AuthenticatedRequest, res
       });
     }
 
+    const isAdmin = Boolean(getValidAdminSession(req));
     const baseUrl = getBaseUrl(req);
     const videoReq = db.getRequestById(requestId.trim());
     if (videoReq) {
-      if (req.authUser!.role !== 'admin' && videoReq.userId !== req.authUser!.uid) {
+      const isTokenMatch = Boolean(
+        token && videoReq.accessToken.toLowerCase() === String(token).trim().toLowerCase()
+      );
+      if (!isAdmin && !isTokenMatch) {
         return res.status(403).json({ success: false, error: 'Forbidden' });
       }
       const result = await emailService.sendOwnerNewRequestNotification(videoReq, baseUrl, {
-        forceRetry: Boolean(forceRetry)
+        forceRetry: Boolean(forceRetry && isAdmin)
       });
       return res.status(result.success ? 200 : 202).json({
         success: result.success,
@@ -916,6 +769,9 @@ const handleSendRequestNotificationEmail = async (req: AuthenticatedRequest, res
 
     const budgetReq = db.getBudgetRequestById(requestId.trim());
     if (budgetReq) {
+      if (!isAdmin) {
+        return res.status(403).json({ success: false, error: 'Forbidden' });
+      }
       const result = await emailService.sendOwnerBudgetRequestNotification(budgetReq, baseUrl, {
         forceRetry: Boolean(forceRetry)
       });
@@ -948,37 +804,12 @@ const handleSendRequestNotificationEmail = async (req: AuthenticatedRequest, res
   }
 };
 
-app.post('/api/notifications/send-request-email', requireAuth, handleSendRequestNotificationEmail);
-app.post('/api/send-request-email', requireAuth, handleSendRequestNotificationEmail);
+app.post('/api/notifications/send-request-email', handleSendRequestNotificationEmail);
+app.post('/api/send-request-email', handleSendRequestNotificationEmail);
 
 // ================= PRIVATE ADMIN API ROUTES =================
 
-// Check whether admin account ("ali") is initialized
-app.get('/api/admin/bootstrap-status', (_req, res) => {
-  res.json({
-    initialized: db.hasAdminAccount()
-  });
-});
-
-// One-time initial admin password setup (only works if ADMIN_PASSWORD env was unset AND admin doesn't have a password yet)
-app.post('/api/admin/setup-initial-password', (req, res) => {
-  try {
-    if (db.hasAdminAccount()) {
-      return res.status(403).json({ error: 'Admin account is already initialized.' });
-    }
-    const { password, confirmPassword } = req.body || {};
-    const result = db.setupInitialAdminPassword({ password, confirmPassword });
-    return res.json({
-      success: true,
-      user: result.user,
-      token: result.session.token
-    });
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message || 'Failed to initialize admin password.' });
-  }
-});
-
-// Admin Login (Requires username "ali" and verified scrypt password; returns opaque session token)
+// Admin Login (Requires username "alikka" and verified server-side secret password; returns opaque session token)
 app.post('/api/admin/login', (req, res) => {
   try {
     const { username, password } = req.body || {};
@@ -989,9 +820,27 @@ app.post('/api/admin/login', (req, res) => {
       token: result.session.token
     });
   } catch (err: any) {
-    return res.status(401).json({ error: err.message || 'Incorrect admin username or password.' });
+    return res.status(401).json({ error: err.message || 'Invalid administrator credentials.' });
   }
 });
+
+// Admin Logout (Session revocation)
+const handleAdminLogout = (req: express.Request, res: express.Response) => {
+  try {
+    const token = extractSessionToken(req);
+    if (token) {
+      db.revokeSession(token);
+    }
+    res.json({
+      success: true,
+      message: 'Signed out successfully.'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
+app.post('/api/admin/logout', handleAdminLogout);
+app.post('/api/auth/logout', handleAdminLogout);
 
 // Verify active admin session
 app.get('/api/admin/session', requireAdmin, (req: AuthenticatedRequest, res) => {
@@ -1053,20 +902,6 @@ app.get('/api/admin/requests', requireAdmin, (req, res) => {
     success: true,
     stats,
     requests: filtered
-  });
-});
-
-// Admin Customer Accounts List
-app.get('/api/admin/users', requireAdmin, (_req, res) => {
-  const users = db.getAllUsers();
-  const allRequests = db.getAllRequests();
-  const enriched = users.map((u) => ({
-    ...u,
-    requestCount: allRequests.filter((r) => r.userId === u.uid).length
-  }));
-  res.json({
-    success: true,
-    users: enriched
   });
 });
 

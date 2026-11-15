@@ -215,11 +215,11 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({ onBack }) => {
                 </li>
                 <li className="flex items-start gap-3">
                   <HardDrive className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
-                  <span>Same customer account, character photo uploads, custom quotes, and video deliveries synced live with the server.</span>
+                  <span>Character photo uploads, custom quotes, request tracking, and video deliveries synced live with the studio server.</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <RefreshCw className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <span>Built-in automatic updates keep your desktop app current while preserving your login session.</span>
+                  <span>Built-in automatic updates keep your desktop app current with the latest AI Video Maker features.</span>
                 </li>
               </ul>
             </div>
@@ -263,9 +263,9 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({ onBack }) => {
 
             <div className="p-4 rounded-xl bg-[#050811] border border-slate-800 space-y-2">
               <p className="text-xs font-bold text-indigo-400">04. Open Desktop App</p>
-              <h3 className="text-sm font-bold text-white">Sign In &amp; Create</h3>
+              <h3 className="text-sm font-bold text-white">Click Sign In &amp; Create</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Double-click the <strong>AI Video Maker</strong> icon on your Windows Desktop and log in with your customer account.
+                Double-click the <strong>AI Video Maker</strong> icon on your Windows Desktop, click <strong>SIGN IN</strong>, and start creating immediately.
               </p>
             </div>
           </div>

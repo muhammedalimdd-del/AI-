@@ -192,7 +192,7 @@ export const SuccessScreen: React.FC<SuccessScreenProps> = ({
             onClick={() => onTrack(request.id, request.accessToken)}
             className="w-full sm:w-auto px-7 py-3.5 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
           >
-            <span>Track This Request in My Requests</span>
+            <span>Track This Request</span>
             <ArrowRight className="w-4 h-4" />
           </button>
 

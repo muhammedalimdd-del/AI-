@@ -8,7 +8,6 @@ interface FooterProps {
   onNavigate: (sectionId: string) => void;
   onRequestClick: () => void;
   onTrackClick: () => void;
-  onMyRequestsClick: () => void;
   onPrivacyClick: () => void;
   onTermsClick: () => void;
   onDeleteRequestClick: () => void;
@@ -20,7 +19,7 @@ interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({
   onNavigate,
   onRequestClick,
-  onMyRequestsClick,
+  onTrackClick,
   onPrivacyClick,
   onTermsClick,
   onDeleteRequestClick,
@@ -44,7 +43,7 @@ export const Footer: React.FC<FooterProps> = ({
               </span>
               <span>·</span>
               <span className="flex items-center gap-1">
-                <Shield className="w-3.5 h-3.5 text-emerald-400" /> Private Customer Accounts
+                <Shield className="w-3.5 h-3.5 text-emerald-400" /> No Account Required
               </span>
             </div>
           </div>
@@ -74,8 +73,8 @@ export const Footer: React.FC<FooterProps> = ({
                 </button>
               </li>
               <li>
-                <button onClick={onMyRequestsClick} className="hover:text-white transition-colors cursor-pointer">
-                  My Requests Dashboard
+                <button onClick={onTrackClick} className="hover:text-white transition-colors cursor-pointer">
+                  Track Video Request
                 </button>
               </li>
             </ul>

@@ -25,11 +25,9 @@ export interface UserAccount {
   username: string;
   email?: string;
   displayName: string;
-  photoURL?: string;
   createdAt: string;
   lastLoginAt: string;
-  role: 'customer' | 'admin';
-  hasRecoveryEmail?: boolean;
+  role: 'admin';
 }
 
 export interface QuoteDetails {

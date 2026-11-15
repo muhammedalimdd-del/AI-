@@ -1,21 +1,16 @@
 import React from 'react';
-import { Sparkles, ArrowRight, Film, ShieldCheck, CreditCard, User, Clock } from 'lucide-react';
-import { UserAccount } from '../types/client.ts';
+import { Sparkles, ArrowRight, Film, ShieldCheck, CreditCard, Clock } from 'lucide-react';
 
 interface HeroSectionProps {
-  currentUser?: UserAccount | null;
   onRequestClick: () => void;
   onExploreStylesClick: () => void;
-  onMyRequestsClick?: () => void;
-  onProfileClick?: () => void;
+  onTrackClick?: () => void;
 }
 
 export const HeroSection: React.FC<HeroSectionProps> = ({
-  currentUser,
   onRequestClick,
   onExploreStylesClick,
-  onMyRequestsClick,
-  onProfileClick
+  onTrackClick
 }) => {
   const visualCards = [
     {
@@ -74,22 +69,6 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Top Header Tag */}
         <div className="text-center max-w-3xl mx-auto">
-          {/* Welcome User Badge */}
-          {currentUser && (
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 text-xs text-slate-200 mb-4 shadow-lg shadow-black/40">
-              {currentUser.photoURL ? (
-                <img
-                  src={currentUser.photoURL}
-                  alt={currentUser.displayName || 'User'}
-                  className="w-4 h-4 rounded-full object-cover"
-                />
-              ) : (
-                <User className="w-3.5 h-3.5 text-indigo-400" />
-              )}
-              <span>Welcome back, <strong className="text-white">{currentUser.displayName || currentUser.username || 'Creator'}</strong></span>
-            </div>
-          )}
-
           <div className="flex items-center justify-center gap-2 mb-6">
             <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-slate-900/90 border border-amber-500/40 text-amber-300 text-xs font-semibold backdrop-blur-sm shadow-lg shadow-amber-950/40">
               <img
@@ -136,28 +115,18 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             </button>
           </div>
 
-          {/* Authenticated Fast Links: My Requests & My Profile */}
-          <div className="flex items-center justify-center gap-3 mb-10 text-xs">
-            {onMyRequestsClick && (
+          {/* Fast Link: Track Existing Request */}
+          {onTrackClick && (
+            <div className="flex items-center justify-center gap-3 mb-10 text-xs">
               <button
-                onClick={onMyRequestsClick}
+                onClick={onTrackClick}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
               >
                 <Clock className="w-3.5 h-3.5 text-indigo-400" />
-                <span>My Requests</span>
+                <span>Track Existing Request</span>
               </button>
-            )}
-
-            {onProfileClick && (
-              <button
-                onClick={onProfileClick}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
-              >
-                <User className="w-3.5 h-3.5 text-cyan-400" />
-                <span>My Profile</span>
-              </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Trust points */}
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-slate-400 pb-12">

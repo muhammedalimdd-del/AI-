@@ -12,7 +12,6 @@ import {
   Sparkles,
   AlertCircle,
   CreditCard,
-  UserCheck,
   RotateCcw,
   Key,
   CheckCircle2,
@@ -37,19 +36,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     }
   });
   const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
-  const [isInitialized, setIsInitialized] = useState<boolean>(true);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
-  // Admin Login / One-Time Bootstrap State (zero hardcoded passwords)
+  // Private Admin Login State (zero hardcoded passwords)
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  // Navigation tabs (removed Free Trials & Firebase Database tabs)
-  const [activeTab, setActiveTab] = useState<'requests' | 'users' | 'budget' | 'emails' | 'settings'>('requests');
+  // Navigation tabs (removed Customer Accounts & Free Trials tabs)
+  const [activeTab, setActiveTab] = useState<'requests' | 'budget' | 'emails' | 'settings'>('requests');
 
   // Inline notification banner (replaces browser alert dialogs)
   const [dashboardNotice, setDashboardNotice] = useState<{
@@ -107,11 +104,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const [transactionRefInput, setTransactionRefInput] = useState<string>('');
   const [isSendingQuote, setIsSendingQuote] = useState<boolean>(false);
 
-  // Customer Accounts & Audit logs state
-  const [users, setUsers] = useState<any[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [userSearch, setUserSearch] = useState('');
-
   // Idea & Budget Requests state
   const [budgetRequests, setBudgetRequests] = useState<any[]>([]);
   const [selectedBudgetRequest, setSelectedBudgetRequest] = useState<any | null>(null);
@@ -164,7 +156,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     'x-session-token': token
   });
 
-  // On mount: validate stored token via /api/admin/session or check /api/admin/bootstrap-status
+  // On mount: validate stored admin session token via /api/admin/session
   useEffect(() => {
     let active = true;
     const initAdminAuth = async () => {
@@ -178,7 +170,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           if (!active) return;
           if (sessionRes.ok && sessionRes.data?.user?.role === 'admin') {
             setIsAuthenticated(true);
-            setIsInitialized(true);
             setIsCheckingAuth(false);
             loadData(adminToken);
             return;
@@ -188,11 +179,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           } catch {}
           setAdminToken('');
         }
-
-        const statusRes = await safeFetchJson<{ initialized?: boolean }>('/api/admin/bootstrap-status');
-        if (!active) return;
-        setIsInitialized(statusRes.data?.initialized !== false);
-        setIsAuthenticated(false);
+        if (active) setIsAuthenticated(false);
       } catch {
         if (active) setIsAuthenticated(false);
       } finally {
@@ -211,7 +198,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
     setLoginError(null);
 
     if (!usernameInput.trim() || !passwordInput) {
-      setLoginError('Please enter your admin username and password.');
+      setLoginError('Invalid administrator credentials.');
       return;
     }
 
@@ -232,7 +219,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       });
 
       if (!res.ok || !res.data?.token) {
-        throw new Error(res.data?.error || res.error || 'Incorrect admin username or password.');
+        throw new Error(res.data?.error || 'Invalid administrator credentials.');
       }
 
       const token = res.data.token;
@@ -244,58 +231,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
       setPasswordInput('');
       loadData(token);
     } catch (err: any) {
-      setLoginError(err.message || 'Incorrect admin username or password.');
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleInitialSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isLoggingIn) return;
-    setLoginError(null);
-
-    if (!passwordInput || passwordInput.length < 8) {
-      setLoginError('Please create an admin password of at least 8 characters.');
-      return;
-    }
-    if (passwordInput !== confirmPasswordInput) {
-      setLoginError('Passwords do not match.');
-      return;
-    }
-
-    setIsLoggingIn(true);
-    try {
-      const res = await safeFetchJson<{
-        success?: boolean;
-        token?: string;
-        user?: any;
-        error?: string;
-      }>('/api/admin/setup-initial-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          password: passwordInput,
-          confirmPassword: confirmPasswordInput
-        })
-      });
-
-      if (!res.ok || !res.data?.token) {
-        throw new Error(res.data?.error || res.error || 'Failed to initialize admin password.');
-      }
-
-      const token = res.data.token;
-      setAdminToken(token);
-      try {
-        localStorage.setItem(ADMIN_TOKEN_KEY, token);
-      } catch {}
-      setIsInitialized(true);
-      setIsAuthenticated(true);
-      setPasswordInput('');
-      setConfirmPasswordInput('');
-      loadData(token);
-    } catch (err: any) {
-      setLoginError(err.message || 'Failed to initialize admin password.');
+      setLoginError(err.message || 'Invalid administrator credentials.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -304,7 +240,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
   const handleAdminLogout = async () => {
     if (adminToken) {
       try {
-        await fetch('/api/auth/logout', {
+        await fetch('/api/admin/logout', {
           method: 'POST',
           headers: getAdminHeaders(adminToken)
         });
@@ -326,13 +262,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
 
     try {
       const headers = getAdminHeaders(token);
-      const [reqRes, bgtRes, emlRes, setRes, usrRes, audRes] = await Promise.all([
+      const [reqRes, bgtRes, emlRes, setRes] = await Promise.all([
         fetch(`/api/admin/requests?filter=${encodeURIComponent(activeFilter)}`, { headers }),
         fetch('/api/admin/budget-requests?filter=all', { headers }),
         fetch('/api/admin/email-logs', { headers }),
-        fetch('/api/admin/settings', { headers }),
-        fetch('/api/admin/users', { headers }),
-        fetch('/api/admin/audit-logs', { headers })
+        fetch('/api/admin/settings', { headers })
       ]);
 
       if (reqRes.status === 401 || reqRes.status === 403) {
@@ -340,13 +274,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
         return;
       }
 
-      const [parsedReq, parsedBgt, parsedEml, parsedSet, parsedUsr, parsedAud] = await Promise.all([
+      const [parsedReq, parsedBgt, parsedEml, parsedSet] = await Promise.all([
         safeResponseJson<any>(reqRes),
         safeResponseJson<any>(bgtRes),
         safeResponseJson<any>(emlRes),
-        safeResponseJson<any>(setRes),
-        safeResponseJson<any>(usrRes),
-        safeResponseJson<any>(audRes)
+        safeResponseJson<any>(setRes)
       ]);
 
       if (parsedReq.ok && parsedReq.data) {
@@ -375,12 +307,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           setSettingsSmtpPass(st.settings.smtpPass || '');
           setSettingsApiKey(st.settings.apiKey || '');
         }
-      }
-      if (parsedUsr.ok && parsedUsr.data) {
-        setUsers(parsedUsr.data.users || []);
-      }
-      if (parsedAud.ok && parsedAud.data) {
-        setAuditLogs(parsedAud.data.auditLogs || []);
       }
     } catch (e: any) {
       showNotice('error', e.message || 'Failed to load studio data.');
@@ -840,173 +766,78 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             />
           </div>
 
-          {!isInitialized ? (
-            <>
-              <h3 className="text-xl font-bold text-white mb-1">Owner Admin Setup</h3>
-              <p className="text-xs text-slate-400 mb-6 leading-relaxed">
-                Set a private password for the studio owner account (<span className="font-mono text-indigo-300">ali</span>). This one-time setup locks automatically once saved.
-              </p>
+          <h3 className="text-xl font-bold text-white mb-1">Admin Login</h3>
+          <p className="text-xs text-slate-400 mb-6">
+            Private administrator authentication portal.
+          </p>
 
-              {loginError && (
-                <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs">
-                  {loginError}
-                </div>
-              )}
-
-              <form onSubmit={handleInitialSetup} className="space-y-3.5 text-left">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Admin Username
-                  </label>
-                  <input
-                    type="text"
-                    value="ali"
-                    readOnly
-                    className="w-full px-4 py-2.5 bg-[#0C1220]/70 border border-slate-800 rounded-xl text-indigo-300 font-mono text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Create Admin Password (min. 8 characters)
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="Enter secure password"
-                      className="w-full px-4 py-2.5 pr-10 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
-                      required
-                      minLength={8}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-2.5 text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Confirm Admin Password
-                  </label>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={confirmPasswordInput}
-                    onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                    placeholder="Re-enter password"
-                    className="w-full px-4 py-2.5 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
-                    required
-                    minLength={8}
-                  />
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="submit"
-                    disabled={isLoggingIn}
-                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-sm cursor-pointer transition-all"
-                  >
-                    {isLoggingIn ? 'Initializing...' : 'Save & Open Studio'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-sm cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
-              </form>
-            </>
-          ) : (
-            <>
-              <h3 className="text-xl font-bold text-white mb-1">Private Owner Login</h3>
-              <p className="text-xs text-slate-400 mb-6">
-                Restricted studio administration portal. Sign in with your owner credentials.
-              </p>
-
-              {loginError && (
-                <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs">
-                  {loginError}
-                </div>
-              )}
-
-              <form onSubmit={handleLogin} className="space-y-3.5 text-left">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Admin Username
-                  </label>
-                  <input
-                    type="text"
-                    value={usernameInput}
-                    onChange={(e) => setUsernameInput(e.target.value)}
-                    placeholder="Enter admin username"
-                    autoComplete="username"
-                    className="w-full px-4 py-3 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm font-mono"
-                    required
-                    autoFocus
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Admin Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="Enter admin password"
-                      autoComplete="current-password"
-                      className="w-full px-4 py-3 pr-10 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
-                      required
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-3 text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="submit"
-                    disabled={isLoggingIn}
-                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-sm cursor-pointer transition-all flex items-center justify-center gap-2"
-                  >
-                    <Lock className="w-4 h-4" />
-                    <span>{isLoggingIn ? 'Signing In...' : 'Access Dashboard'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-sm cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
-              </form>
-            </>
+          {loginError && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs">
+              {loginError}
+            </div>
           )}
+
+          <form onSubmit={handleLogin} className="space-y-3.5 text-left">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                Admin Username
+              </label>
+              <input
+                type="text"
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                placeholder="Enter admin username"
+                autoComplete="username"
+                className="w-full px-4 py-3 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm font-mono"
+                required
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                Admin Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Enter admin password"
+                  autoComplete="current-password"
+                  className="w-full px-4 py-3 pr-10 bg-[#0C1220] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="submit"
+                disabled={isLoggingIn}
+                className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold text-sm cursor-pointer transition-all flex items-center justify-center gap-2"
+              >
+                <Lock className="w-4 h-4" />
+                <span>{isLoggingIn ? 'Signing In...' : 'Admin Login'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-sm cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );
   }
-
-  const filteredUsers = users.filter((u) => {
-    const q = userSearch.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (u.username || '').toLowerCase().includes(q) ||
-      (u.displayName || '').toLowerCase().includes(q) ||
-      (u.email || '').toLowerCase().includes(q)
-    );
-  });
 
   return (
     <div className="fixed inset-0 z-50 bg-[#060911] text-slate-100 flex flex-col overflow-hidden animate-fadeIn">
@@ -1024,7 +855,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <span>AI TIMES Studio Admin</span>
               <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
-                OWNER: ALI
+                OWNER: ALIKKA
               </span>
             </h2>
             <p className="text-[11px] text-slate-400">
@@ -1046,15 +877,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               }`}
             >
               Video Requests ({requests.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('users')}
-              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'users' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Customer Accounts ({users.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('budget')}
@@ -1240,11 +1062,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                         <td className="py-3.5 px-4">
                           <span className="font-bold text-white block group-hover:text-indigo-200">
                             {r.customerName}
-                            {r.customerUsername && (
-                              <span className="ml-1.5 text-[10px] font-mono text-purple-300">
-                                (@{r.customerUsername})
-                              </span>
-                            )}
                           </span>
                           <span
                             className="text-indigo-300 font-mono text-[11px]"
@@ -1307,113 +1124,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
           </div>
         )}
 
-        {/* TAB 2: CUSTOMER ACCOUNTS MANAGEMENT */}
-        {activeTab === 'users' && (
-          <div className="space-y-6 animate-fadeIn">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <UserCheck className="w-5 h-5 text-emerald-400" />
-                  <span>Registered Customer Accounts</span>
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Customers register their own personal username and password. Each customer can only access their own private video requests.
-                </p>
-              </div>
-
-              <div className="w-full sm:w-64">
-                <input
-                  type="text"
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search username or email..."
-                  className="w-full px-3 py-2 bg-[#0C1220] border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500"
-                />
-              </div>
-            </div>
-
-            {/* Users Table */}
-            <div className="rounded-2xl bg-[#090D16] border border-slate-800 overflow-hidden">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 bg-[#0C1220] text-slate-400 font-semibold text-[11px] uppercase tracking-wider">
-                    <th className="py-3 px-4">Username / Name</th>
-                    <th className="py-3 px-4">UID</th>
-                    <th className="py-3 px-4">Recovery Email</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Requests</th>
-                    <th className="py-3 px-4">Joined</th>
-                    <th className="py-3 px-4 text-right">Last Login</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-500">
-                        No customer accounts registered yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredUsers.map((u) => (
-                      <tr key={u.uid} className="hover:bg-slate-800/30">
-                        <td className="py-3.5 px-4 flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-indigo-900/60 text-indigo-300 flex items-center justify-center font-bold text-xs">
-                            {(u.username || u.displayName || 'U')[0].toUpperCase()}
-                          </div>
-                          <div>
-                            <span className="font-bold text-white font-mono">@{u.username || u.displayName}</span>
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-slate-400 text-[11px]">{u.uid}</td>
-                        <td className="py-3.5 px-4 font-mono text-slate-300">
-                          {u.email && !u.email.endsWith('@aivideomaker.local') ? u.email : '—'}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-950 text-indigo-300 border border-indigo-800">
-                            {u.role || 'customer'}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4 font-mono text-cyan-300 font-bold">
-                          {u.requestCount ?? 0}
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-400">
-                          {new Date(u.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="py-3.5 px-4 text-right text-slate-400 text-[11px]">
-                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '—'}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {auditLogs.length > 0 && (
-              <div className="p-5 rounded-2xl bg-[#090D16] border border-slate-800 space-y-3">
-                <h4 className="text-sm font-bold text-white">Security &amp; Audit Trail</h4>
-                <div className="space-y-2 max-h-48 overflow-y-auto text-xs">
-                  {auditLogs.map((a) => (
-                    <div
-                      key={a.id}
-                      className="p-2.5 rounded-lg bg-[#0C1220] border border-slate-800/80 flex items-center justify-between"
-                    >
-                      <div>
-                        <span className="text-indigo-400 font-mono font-semibold">{a.targetUserEmail}</span>:{' '}
-                        {a.details}
-                      </div>
-                      <span className="text-slate-500 text-[10px]">
-                        {new Date(a.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 3: IDEA & CUSTOM INQUIRIES */}
+        {/* TAB 2: IDEA & CUSTOM INQUIRIES */}
         {activeTab === 'budget' && (
           <div className="space-y-6 animate-fadeIn">
             <div className="flex items-center justify-between">
@@ -1930,7 +1641,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
               <div>
                 <h4 className="text-sm font-bold text-white flex items-center gap-2">
                   <Key className="w-4 h-4 text-amber-400" />
-                  <span>Change Admin Password (Account: ali)</span>
+                  <span>Change Admin Password (Account: alikka)</span>
                 </h4>
                 <p className="text-xs text-slate-400 mt-0.5">
                   Update your private studio owner password securely using salted cryptographic hashing.
@@ -2038,11 +1749,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                       <div className="text-xs text-slate-300 mt-1 space-y-0.5">
                         <p>
                           Customer Name: <strong className="text-white">{selectedRequest.customerName}</strong>
-                          {selectedRequest.customerUsername && (
-                            <span className="ml-2 text-purple-300 font-mono">
-                              (Username: @{selectedRequest.customerUsername})
-                            </span>
-                          )}
                         </p>
                         <p>
                           Email Address for Video Delivery:{' '}
@@ -2399,9 +2105,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onClose }) => {
                         <strong className="text-white">{selectedRequest.customerName}</strong>
                       </div>
                       <div>
-                        <span className="text-slate-400">Customer Username:</span>{' '}
+                        <span className="text-slate-400">Request Status:</span>{' '}
                         <strong className="text-purple-300 font-mono">
-                          @{selectedRequest.customerUsername || selectedRequest.userId || selectedRequest.customerName}
+                          {selectedRequest.status}
                         </strong>
                       </div>
                       <div>
