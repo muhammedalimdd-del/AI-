@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
@@ -1265,10 +1266,18 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // ================= FRONTEND VITE INTEGRATION =================
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true }
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+        ws: { server: httpServer },
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+        watch: process.env.DISABLE_HMR === 'true' ? null : {}
+      }
     });
     app.use(vite.middlewares);
     app.use('*', async (req, res, next) => {
@@ -1304,7 +1313,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`AI TIMES — AI Video Maker running on http://localhost:${PORT}`);
   });
 }
